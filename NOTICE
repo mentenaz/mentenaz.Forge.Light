@@ -1,0 +1,25 @@
+Forge Light
+Copyright (C) Mentenaz and contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE.
+
+Third-party and derived code
+----------------------------
+Parts of this project are derived from Zed (https://github.com/zed-industries/zed),
+which is licensed under GPL-3.0-or-later (applications and most crates) and
+Apache-2.0 (gpui and the extension API definitions):
+
+  crates/forge_extensions   The extension manifest (src/manifest.rs) follows
+                            Zed's `extension` crate (extension_manifest.rs).
+                            The registry client mirrors the shape of Zed's
+                            /extensions API.
+
+Files derived from Zed keep a note naming their origin. When code is copied,
+its original copyright header stays in the file.
+
+Extensions installed from the Forge registry are separate works and carry their
+own licenses; they are downloaded at the user's request and are not part of this
+distribution.
