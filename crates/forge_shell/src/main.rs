@@ -24,6 +24,7 @@ macro_rules! on {
     }};
 }
 
+mod extensions;
 mod lsp;
 mod search;
 mod session;
@@ -31,6 +32,7 @@ mod shell;
 mod store;
 mod tab;
 mod tabs;
+mod themes;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -103,6 +105,7 @@ fn main() -> Result<(), slint::PlatformError> {
     wire_tabs(&ui, &shell);
     wire_editor(&ui, &shell);
     let manager = wire_lsp(&ui, &shell);
+    wire_extensions(&ui, &shell);
 
     // `FORGE_SEARCH=<query>` opens the Search panel with that query (handy for testing).
     if let Some(query) = std::env::var("FORGE_SEARCH").ok().filter(|q| !q.is_empty()) {

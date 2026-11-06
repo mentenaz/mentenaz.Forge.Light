@@ -528,3 +528,43 @@ pub(crate) fn outline_rows(symbols: &[lsp_client::Symbol]) -> Vec<OutlineRow> {
         .map(|(i, s)| OutlineRow { item: i as i32, depth: s.depth as i32, label: s.name.as_str().into(), kind: kind_label(s.kind).into() })
         .collect()
 }
+
+pub(crate) fn ext_rows(s: &Shell) -> Vec<ExtListRow> {
+    let header = |label: &str| ExtListRow { kind: 0, id: SharedString::new(), label: label.into(), sub: SharedString::new(), state: 0, item: -1, active: false };
+    let mut rows = vec![header("Installed themes")];
+    rows.push(ExtListRow { kind: 1, label: "Forge Default".into(), item: -1, active: s.theme_key.is_none(), ..header("") });
+    for (i, t) in s.ext_themes.iter().enumerate() {
+        let look = match t.appearance {
+            forge_extensions::Appearance::Dark => "Dark",
+            forge_extensions::Appearance::Light => "Light",
+        };
+        rows.push(ExtListRow {
+            kind: 1,
+            label: t.name.as_str().into(),
+            sub: format!("{look} · {}", t.extension_name).into(),
+            item: i as i32,
+            active: s.theme_key.as_deref() == Some(t.key().as_str()),
+            ..header("")
+        });
+    }
+    rows.push(header("Registry"));
+    for e in &s.ext_entries {
+        let state = if s.ext_busy.contains(&e.id) {
+            1
+        } else {
+            match s.ext_installed.get(&e.id) {
+                Some(v) if *v == e.version => 2,
+                Some(_) => 3,
+                None => 0,
+            }
+        };
+        let sub = e.description.as_deref().map(str::trim).filter(|d| !d.is_empty()).map_or_else(|| e.provides.join(", "), |d| d.chars().take(120).collect());
+        rows.push(ExtListRow { kind: 2, id: e.id.as_str().into(), label: format!("{} {}", e.name, e.version).into(), sub: sub.into(), state, ..header("") });
+    }
+    rows
+}
+
+pub(crate) fn sync_extensions(ui: &AppWindow, s: &Shell) {
+    ui.set_ext_rows(model(ext_rows(s)));
+    ui.set_ext_status(s.ext_status.as_str().into());
+}

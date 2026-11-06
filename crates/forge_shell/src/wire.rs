@@ -552,3 +552,45 @@ pub(crate) fn wire_lsp(ui: &AppWindow, shell: &Rc<RefCell<Shell>>) -> Arc<Manage
     }
     manager
 }
+
+pub(crate) fn wire_extensions(ui: &AppWindow, shell: &Rc<RefCell<Shell>>) {
+    {
+        let mut s = shell.borrow_mut();
+        s.reload_extensions();
+        if let Some((key, palette)) = s.saved_theme() {
+            themes::apply(ui, &palette);
+            s.theme_key = Some(key);
+        }
+        sync_extensions(ui, &s);
+    }
+    on!(ui, shell, on_ext_refresh, |ui, s| {
+        s.ext_refresh(ui.as_weak(), false);
+        sync_extensions(&ui, &s);
+    });
+    on!(ui, shell, on_ext_search, |ui, s, q, all| {
+        s.ext_search(ui.as_weak(), q.to_string(), all);
+        sync_extensions(&ui, &s);
+    });
+    on!(ui, shell, on_ext_install, |ui, s, id| {
+        s.ext_install(ui.as_weak(), id.to_string());
+        sync_extensions(&ui, &s);
+    });
+    on!(ui, shell, on_theme_picked, |ui, s, i| {
+        if i < 0 {
+            ui.global::<Theme>().set_custom(false);
+            s.set_theme_key(None);
+        } else if let Some((key, palette)) = s.theme_palette(i as usize) {
+            themes::apply(&ui, &palette);
+            s.set_theme_key(Some(key));
+        }
+        sync_extensions(&ui, &s);
+    });
+    let (weak, sh) = (ui.as_weak(), Rc::clone(shell));
+    ui.on_ext_changed(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let changed = sh.borrow_mut().apply_ext_replies();
+        if changed {
+            sync_extensions(&ui, &sh.borrow());
+        }
+    });
+}

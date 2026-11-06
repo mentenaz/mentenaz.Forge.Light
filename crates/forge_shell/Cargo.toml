@@ -8,6 +8,7 @@ license.workspace = true
 slint.workspace = true
 editor_core = { path = "../editor_core" }
 lsp_client = { path = "../lsp_client" }
+forge_extensions = { path = "../forge_extensions" }
 ignore = "0.4"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 

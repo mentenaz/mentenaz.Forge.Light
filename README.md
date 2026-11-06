@@ -1,9 +1,9 @@
 # Forge Light
 
 A light version of the Mentenaz Forge editor, written in Rust with [Slint](https://slint.dev).
-It is a small code editor with a docked shell (explorer, search, problems, outline), a
-tree-sitter highlighted editor and a built-in language-server client. Extensions are
-installed from the Forge registry.
+It is a small code editor with a docked shell (explorer, search, problems, outline,
+extensions), a tree-sitter highlighted editor and a built-in language-server client.
+Extensions, starting with themes, are installed from the Forge registry.
 
 Licensed under the **GPL-3.0-or-later**, see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
@@ -36,10 +36,10 @@ actions, diagnostics and the Outline panel work for `.rs` files.
 
 | Crate | Purpose |
 |---|---|
-| `crates/forge_shell` | The application: Slint UI (`ui/`) and the shell state. `main.rs` sets up and calls `wire.rs`; `shell`, `tab`, `tabs`, `lsp`, `session` and `view` hold the rest. |
+| `crates/forge_shell` | The application: Slint UI (`ui/`) and the shell state. `main.rs` sets up and calls `wire.rs`; `shell`, `tab`, `tabs`, `lsp`, `session`, `view`, `extensions` and `themes` hold the rest. |
 | `crates/editor_core` | Text buffer with undo, tree-sitter syntax and highlighting. No UI dependency. |
 | `crates/lsp_client` | JSON-RPC language-server client and manager. No UI dependency. |
-| `crates/forge_extensions` | Registry client, archive installer and `extension.toml` parser. No UI dependency. |
+| `crates/forge_extensions` | Registry client, archive installer, `extension.toml` parser and theme-file reader. No UI dependency. |
 | `crates/light_cpu_app` | A separate small app. |
 
 ## Extensions
@@ -49,8 +49,17 @@ which mirrors the shape of Zed's extension API. It lists extensions, downloads t
 archives and unpacks them into `installed/<id>/`. Archives are treated as untrusted: only
 regular files and directories are unpacked and nothing may land outside the extension's folder.
 
-What an installed extension can do inside Forge is being added step by step: themes first,
-then languages (configs, queries, grammars), then language servers.
+### Using extensions
+
+Open the **Extensions** panel from the left dock. It lists registry extensions (themes by
+default; the toggle next to the search box switches to all kinds), and installs them in the
+background. Installed themes appear under "Installed themes": click one to apply it. The choice
+is remembered, and "Forge Default" (or the sun/moon button) returns to the built-in colors.
+
+Themes use Zed's theme format. Colors a theme does not define fall back to the built-in ones.
+
+What else an installed extension can do inside Forge is being added step by step: after
+themes come languages (configs, queries, grammars), then language servers.
 
 Tests that use the real registry are ignored by default:
 

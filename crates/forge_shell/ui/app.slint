@@ -1,11 +1,11 @@
 import { LineEdit, ListView } from "std-widgets.slint";
-import { Theme, PanelInfo, TabInfo, Notice, FileRow, LspInfo, EditorView, LineView, SpanView, MatchView, DiagView, ProblemRow, OutlineRow, SearchRow } from "theme.slint";
+import { Theme, PanelInfo, TabInfo, Notice, FileRow, LspInfo, EditorView, LineView, SpanView, MatchView, DiagView, ProblemRow, OutlineRow, ExtListRow, SearchRow } from "theme.slint";
 import { FindInput } from "codeview.slint";
 import { Ico, FlatButton, VSep, HSep, MenuRow, PopupSurface, WinButton } from "widgets.slint";
 import { Branding } from "branding.slint";
 import { Pane } from "pane.slint";
 
-export { PanelInfo, TabInfo, Notice, FileRow, LspInfo, EditorView, LineView, SpanView, MatchView, DiagView, ProblemRow, SearchRow }
+export { Theme, ExtListRow, PanelInfo, TabInfo, Notice, FileRow, LspInfo, EditorView, LineView, SpanView, MatchView, DiagView, ProblemRow, SearchRow }
 
 // ---- dock content -------------------------------------------------------
 
@@ -98,6 +98,84 @@ component OutlineView inherits Rectangle {
     }
 }
 
+component ExtensionsView inherits Rectangle {
+    in property <bool> shown;
+    in property <[ExtListRow]> rows;
+    in property <string> status;
+    in-out property <string> query;
+    in-out property <bool> all;
+    callback refresh();
+    callback search(string, bool);
+    callback install(string);
+    callback pick-theme(int);
+    init => { if root.shown { root.refresh(); } }
+    changed shown => { if root.shown { root.refresh(); } }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 4px;
+            FindInput {
+                placeholder: "Search extensions";
+                text <=> root.query;
+                horizontal-stretch: 1;
+                accepted(shift) => { root.search(root.query, root.all); }
+            }
+            Rectangle {
+                width: 52px;
+                height: 24px;
+                border-radius: 4px;
+                background: kind-ta.has-hover ? Theme.hover : transparent;
+                kind-ta := TouchArea { clicked => { root.all = !root.all; root.search(root.query, root.all); } }
+                Text { text: root.all ? "All" : "Themes"; font-size: 11px; color: Theme.foreground; horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
+        Text { text: root.status; font-size: 11px; color: Theme.muted-fg; overflow: elide; }
+        ListView {
+            vertical-stretch: 1;
+            for row in root.rows: Rectangle {
+                height: row.kind == 0 ? 26px : row.kind == 1 ? 22px : 40px;
+                background: row.kind != 0 && ta.has-hover ? Theme.hover : transparent;
+                clip: true;
+                ta := TouchArea {
+                    enabled: row.kind == 1 || (row.kind == 2 && (row.state == 0 || row.state == 3));
+                    clicked => {
+                        if row.kind == 1 { root.pick-theme(row.item); } else { root.install(row.id); }
+                    }
+                }
+                if row.kind == 0: Text {
+                    x: 8px; text: row.label; font-size: 12px; font-weight: 600; color: Theme.foreground; vertical-alignment: center;
+                }
+                if row.kind == 1: HorizontalLayout {
+                    padding-left: 18px;
+                    padding-right: 8px;
+                    spacing: 6px;
+                    Text { text: row.active ? "● " + row.label : row.label; font-size: 12px; color: Theme.foreground; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    Text { text: row.sub; font-size: 11px; color: Theme.muted-fg; vertical-alignment: center; }
+                }
+                if row.kind == 2: HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 8px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text { text: row.label; font-size: 12px; color: Theme.foreground; overflow: elide; }
+                        Text { text: row.sub; font-size: 11px; color: Theme.muted-fg; overflow: elide; }
+                    }
+                    Text {
+                        text: row.state == 1 ? "Installing…" : row.state == 2 ? "Installed" : row.state == 3 ? "Update" : "Install";
+                        font-size: 11px;
+                        color: row.state == 0 || row.state == 3 ? Theme.primary : Theme.muted-fg;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
 component SearchView inherits Rectangle {
     in property <[SearchRow]> rows;
     in property <string> status;
@@ -169,6 +247,8 @@ component DockPanel inherits Rectangle {
     in property <[ProblemRow]> problems;
     in property <[ProblemRow]> references;
     in property <[OutlineRow]> outline;
+    in property <[ExtListRow]> ext-rows;
+    in property <string> ext-status;
     in property <[SearchRow]> search-rows;
     in property <string> search-status;
     in-out property <string> search-query;
@@ -182,6 +262,10 @@ component DockPanel inherits Rectangle {
     callback problem-clicked(int);
     callback reference-clicked(int);
     callback outline-clicked(int);
+    callback ext-refresh();
+    callback ext-search(string, bool);
+    callback ext-install(string);
+    callback theme-picked(int);
     callback hide();
     background: Theme.chrome;
 
@@ -215,6 +299,15 @@ component DockPanel inherits Rectangle {
             rows: root.outline;
             clicked(i) => { root.outline-clicked(i); }
         }
+        if root.panel.id == "extensions": ExtensionsView {
+            shown: root.visible;
+            rows: root.ext-rows;
+            status: root.ext-status;
+            refresh() => { root.ext-refresh(); }
+            search(q, all) => { root.ext-search(q, all); }
+            install(id) => { root.ext-install(id); }
+            pick-theme(i) => { root.theme-picked(i); }
+        }
         if root.panel.id == "search": SearchView {
             rows: root.search-rows;
             status: root.search-status;
@@ -225,7 +318,7 @@ component DockPanel inherits Rectangle {
             accepted => { root.search-accepted(); }
             clicked(i) => { root.search-clicked(i); }
         }
-        if root.panel.id != "explorer" && root.panel.id != "problems" && root.panel.id != "references" && root.panel.id != "outline" && root.panel.id != "search": VerticalLayout {
+        if root.panel.id != "explorer" && root.panel.id != "problems" && root.panel.id != "references" && root.panel.id != "outline" && root.panel.id != "extensions" && root.panel.id != "search": VerticalLayout {
             padding: 12px;
             spacing: 10px;
             alignment: start;
@@ -289,6 +382,8 @@ export component AppWindow inherits Window {
     in property <[ProblemRow]> problems;
     in property <[ProblemRow]> references;
     in property <[OutlineRow]> outline;
+    in property <[ExtListRow]> ext-rows;
+    in property <string> ext-status;
     in property <[SearchRow]> search-rows;
     in property <string> search-status;
     in-out property <string> search-query;
@@ -335,6 +430,10 @@ export component AppWindow inherits Window {
     callback problem-clicked(int);
     callback reference-clicked(int);
     callback outline-clicked(int);
+    callback ext-refresh();
+    callback ext-search(string, bool);
+    callback ext-install(string);
+    callback theme-picked(int);
     callback search-edited();
     callback search-accepted();
     callback search-clicked(int);
@@ -343,6 +442,7 @@ export component AppWindow inherits Window {
     callback quit();
     /// A language server changed state or logged; raised from its background thread.
     callback lsp-changed();
+    callback ext-changed();
     /// Server id (0 for all) and "logs", "restart", "stop", "restart-all" or "stop-all".
     callback lsp-action(int, string);
     callback ed-viewport(int, int, int);
@@ -362,7 +462,7 @@ export component AppWindow inherits Window {
     callback drag-window(length, length);
     callback resize-window(length, length);
 
-    function toggle-theme() { Theme.dark = !Theme.dark; }
+    function toggle-theme() { Theme.custom = false; Theme.dark = !Theme.dark; root.theme-picked(-1); }
 
     fs := FocusScope {
         key-pressed(e) => {
@@ -454,6 +554,12 @@ export component AppWindow inherits Window {
                             reference-clicked(i) => { root.reference-clicked(i); }
                             outline: root.outline;
                             outline-clicked(i) => { root.outline-clicked(i); }
+                            ext-rows: root.ext-rows;
+                            ext-status: root.ext-status;
+                            ext-refresh() => { root.ext-refresh(); }
+                            ext-search(q, all) => { root.ext-search(q, all); }
+                            ext-install(id) => { root.ext-install(id); }
+                            theme-picked(i) => { root.theme-picked(i); }
                             search-rows: root.search-rows;
                             search-status: root.search-status;
                             search-query <=> root.search-query;
@@ -561,6 +667,12 @@ export component AppWindow inherits Window {
                             reference-clicked(i) => { root.reference-clicked(i); }
                             outline: root.outline;
                             outline-clicked(i) => { root.outline-clicked(i); }
+                            ext-rows: root.ext-rows;
+                            ext-status: root.ext-status;
+                            ext-refresh() => { root.ext-refresh(); }
+                            ext-search(q, all) => { root.ext-search(q, all); }
+                            ext-install(id) => { root.ext-install(id); }
+                            theme-picked(i) => { root.theme-picked(i); }
                             search-rows: root.search-rows;
                             search-status: root.search-status;
                             search-query <=> root.search-query;
@@ -598,6 +710,12 @@ export component AppWindow inherits Window {
                             reference-clicked(i) => { root.reference-clicked(i); }
                             outline: root.outline;
                             outline-clicked(i) => { root.outline-clicked(i); }
+                            ext-rows: root.ext-rows;
+                            ext-status: root.ext-status;
+                            ext-refresh() => { root.ext-refresh(); }
+                            ext-search(q, all) => { root.ext-search(q, all); }
+                            ext-install(id) => { root.ext-install(id); }
+                            theme-picked(i) => { root.theme-picked(i); }
                             search-rows: root.search-rows;
                             search-status: root.search-status;
                             search-query <=> root.search-query;

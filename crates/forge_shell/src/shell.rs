@@ -65,6 +65,25 @@ pub(crate) struct Shell {
     pub(crate) references: Vec<RefItem>,
     /// Set when a References answer arrived, so the panel gets opened.
     pub(crate) show_references: bool,
+    /// The extension registry and installer; `None` without a data directory.
+    pub(crate) ext: Option<Arc<forge_extensions::Extensions>>,
+    pub(crate) ext_replies: Arc<Mutex<VecDeque<extensions::ExtReply>>>,
+    /// Only the newest registry listing is applied.
+    pub(crate) ext_seq: u64,
+    pub(crate) ext_query: String,
+    /// List every kind of extension, not only themes.
+    pub(crate) ext_all: bool,
+    pub(crate) ext_entries: Vec<forge_extensions::Entry>,
+    pub(crate) ext_status: String,
+    pub(crate) ext_loaded: bool,
+    pub(crate) ext_loading: bool,
+    /// Ids being installed right now.
+    pub(crate) ext_busy: HashSet<String>,
+    /// Installed extension ids with their versions.
+    pub(crate) ext_installed: BTreeMap<String, String>,
+    pub(crate) ext_themes: Vec<forge_extensions::ThemeRef>,
+    /// The applied theme (see `ThemeRef::key`); `None` for the built-in one.
+    pub(crate) theme_key: Option<String>,
 }
 
 impl Shell {
@@ -80,6 +99,7 @@ impl Shell {
         let panels = vec![
             ("explorer", "Explorer", "explorer", 0),
             ("search", "Search", "search", 0),
+            ("extensions", "Extensions", "extensions", 0),
             ("cockpit", "Cockpit", "cockpit", 0),
             ("helm", "Helm", "helm", 0),
             ("python", "Python", "python", 0),
@@ -146,6 +166,19 @@ impl Shell {
             drafted: HashSet::new(),
             references: Vec::new(),
             show_references: false,
+            ext: extensions::open_extensions(),
+            ext_replies: Arc::new(Mutex::new(VecDeque::new())),
+            ext_seq: 0,
+            ext_query: String::new(),
+            ext_all: false,
+            ext_entries: Vec::new(),
+            ext_status: String::new(),
+            ext_loaded: false,
+            ext_loading: false,
+            ext_busy: HashSet::new(),
+            ext_installed: BTreeMap::new(),
+            ext_themes: Vec::new(),
+            theme_key: None,
             recent_all,
             notices: vec![
                 notice(3, "dotnet build failed", "Api.csproj: 1 error, see the Script Runner output.", "Just now", false),

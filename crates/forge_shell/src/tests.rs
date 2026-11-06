@@ -3,6 +3,92 @@ use lsp_client::lsp_types::{self, DocumentSymbolResponse};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+const ZORD: &str = r##"{"name":"Zord","themes":[
+  {"name":"Zord Dark","appearance":"dark","style":{"editor.background":"#11161a","background":"#171c20","text":"#e0e0e0ff",
+   "text.accent":"#bd93f9","border":"#1e1f28","element.hover":"#232c32","syntax":{"keyword":{"color":"#ff79c6"},"comment":{"color":"#6272a4"}}}},
+  {"name":"Zord Light","appearance":"light","style":{"background":"#ffffff","text.accent":"#ffeeaa"}}]}"##;
+
+fn zord(index: usize) -> forge_extensions::Theme {
+    forge_extensions::parse_family(ZORD).unwrap().themes.swap_remove(index)
+}
+
+#[test]
+fn a_theme_maps_onto_the_palette_and_falls_back_for_what_it_lacks() {
+    let p = themes::palette(&zord(0));
+    let rgb = |t: &str| forge_extensions::Rgba::parse(t).unwrap();
+    assert!(p.dark);
+    assert_eq!((p.background, p.foreground, p.primary, p.hover), (rgb("#11161a"), rgb("#e0e0e0"), rgb("#bd93f9"), rgb("#232c32")));
+    // `chrome` has no title bar or surface key here, so the plain `background` stands in.
+    assert_eq!(p.chrome, rgb("#171c20"));
+    // Syntax: the theme's keyword and comment; the rest follow the text color rather than clash.
+    assert_eq!((p.syntax[1], p.syntax[3]), (rgb("#ff79c6"), rgb("#6272a4")));
+    assert_eq!(p.syntax[2], p.foreground);
+    // Keys the theme never mentions use the built-in color for that slot.
+    assert_eq!(p.danger, rgb("#f44747"));
+    // Text on a light accent is dark; on a dark accent it is white.
+    assert_eq!(p.primary_fg, rgb("#111111"));
+    let deep = forge_extensions::parse_family(r##"{"name":"d","themes":[{"name":"d","appearance":"dark","style":{"text.accent":"#3b1d8f"}}]}"##).unwrap();
+    assert_eq!(themes::palette(&deep.themes[0]).primary_fg, rgb("#ffffff"));
+    let light = themes::palette(&zord(1));
+    assert!(!light.dark);
+    assert_eq!(light.primary_fg, rgb("#111111"));
+    // A theme with no syntax colors at all gets the built-in syntax colors for its appearance.
+    assert_eq!(light.syntax[1], rgb("#7c3aed"));
+}
+
+fn shell_with_registry(entries: Vec<forge_extensions::Entry>) -> Shell {
+    let mut shell = Shell::new(std::env::temp_dir());
+    shell.ext_seq = 1;
+    shell.ext_replies.lock().unwrap().push_back(extensions::ExtReply::Listed { seq: 1, result: Ok(entries) });
+    assert!(shell.apply_ext_replies());
+    shell
+}
+
+fn entry(id: &str, version: &str) -> forge_extensions::Entry {
+    forge_extensions::Entry {
+        id: id.into(),
+        name: id.into(),
+        version: version.into(),
+        description: Some("A theme".into()),
+        authors: vec![],
+        repository: None,
+        schema_version: 1,
+        wasm_api_version: None,
+        provides: vec!["themes".into()],
+        published_at: None,
+        download_count: 0,
+    }
+}
+
+#[test]
+fn registry_rows_show_what_is_installed_busy_or_outdated() {
+    let mut shell = shell_with_registry(vec![entry("a", "1.0.0"), entry("b", "2.0.0"), entry("c", "1.0.0"), entry("d", "1.0.0")]);
+    shell.ext_installed.insert("a".into(), "1.0.0".into());
+    shell.ext_installed.insert("b".into(), "1.0.0".into());
+    shell.ext_busy.insert("c".into());
+    assert_eq!(shell.ext_status, "4 extensions");
+    let rows = view::ext_rows(&shell);
+    let states: Vec<(String, i32)> = rows.iter().filter(|r| r.kind == 2).map(|r| (r.id.to_string(), r.state)).collect();
+    // installed, update available, installing, available
+    assert_eq!(states, [("a".into(), 2), ("b".into(), 3), ("c".into(), 1), ("d".into(), 0)]);
+    // The default theme row comes first and is the active one until a theme is picked.
+    let first_theme = rows.iter().find(|r| r.kind == 1).unwrap();
+    assert_eq!((first_theme.item, first_theme.active), (-1, true));
+}
+
+#[test]
+fn an_old_listing_arriving_late_is_ignored_and_errors_reach_the_status() {
+    let mut shell = shell_with_registry(vec![entry("a", "1.0.0")]);
+    shell.ext_seq = 2;
+    shell.ext_replies.lock().unwrap().push_back(extensions::ExtReply::Listed { seq: 1, result: Ok(vec![]) });
+    assert!(!shell.apply_ext_replies());
+    assert_eq!(shell.ext_entries.len(), 1);
+    shell.ext_replies.lock().unwrap().push_back(extensions::ExtReply::Installed { id: "a".into(), result: Err("offline".into()) });
+    assert!(shell.apply_ext_replies());
+    assert_eq!(shell.ext_status, "Could not install a: offline");
+    assert!(shell.ext_busy.is_empty());
+}
+
 #[test]
 fn outline_rows_keep_depth_order_and_a_kind_tag() {
     let sym = |name: &str, kind, depth| lsp_client::Symbol { name: name.into(), detail: String::new(), kind, depth, line: 0, col: 0 };

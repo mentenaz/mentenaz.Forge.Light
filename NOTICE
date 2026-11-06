@@ -14,7 +14,8 @@ Apache-2.0 (gpui and the extension API definitions):
 
   crates/forge_extensions   The extension manifest (src/manifest.rs) follows
                             Zed's `extension` crate (extension_manifest.rs).
-                            The registry client mirrors the shape of Zed's
+                            The theme reader (src/theme.rs) reads Zed's theme file
+                            format. The registry client mirrors the shape of Zed's
                             /extensions API.
 
 Files derived from Zed keep a note naming their origin. When code is copied,

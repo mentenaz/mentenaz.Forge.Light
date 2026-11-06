@@ -32,6 +32,9 @@ export struct FileRow {
 export global Theme {
     out property <string> mono: "Consolas";
     pure public function syntax(kind: int) -> color {
+        if (custom && kind >= 1 && kind < c-syntax.length) {
+            return c-syntax[kind];
+        }
         return kind == 1 ? (dark ? #c084fc : #7c3aed)
             : kind == 2 ? (dark ? #a3e635 : #4d7c0f)
             : kind == 3 ? (dark ? #6b7280 : #9ca3af)
@@ -45,24 +48,44 @@ export global Theme {
             : foreground;
     }
     in-out property <bool> dark: true;
+    // Set from Rust when an installed theme is applied; `custom` switches the built-in palette off.
+    in-out property <bool> custom: false;
+    in property <color> c-background;
+    in property <color> c-foreground;
+    in property <color> c-border;
+    in property <color> c-chrome;
+    in property <color> c-muted;
+    in property <color> c-muted-fg;
+    in property <color> c-tab;
+    in property <color> c-primary;
+    in property <color> c-primary-fg;
+    in property <color> c-accent;
+    in property <color> c-hover;
+    in property <color> c-popover;
+    in property <color> c-danger;
+    in property <color> c-warning;
+    in property <color> c-success;
+    in property <color> c-info;
+    in property <color> c-link;
+    in property <[color]> c-syntax;
 
-    out property <color> background: dark ? #0a0a0f : #fbfbfd;
-    out property <color> foreground: dark ? #e0e0e0 : #1c1c28;
-    out property <color> border: dark ? #2a2a3a : #dcdce6;
-    out property <color> chrome: dark ? #0f0f1a : #f1f1f7; // title bar, docks, status bar
-    out property <color> muted: dark ? #161620 : #e8e8f0;
-    out property <color> muted-fg: dark ? #9ca3af : #6b7280;
-    out property <color> tab: dark ? #0d0d18 : #ececf3;
-    out property <color> primary: #7c3aed;
-    out property <color> primary-fg: #ffffff;
-    out property <color> accent: dark ? #7c3aed33 : #7c3aed22;
-    out property <color> hover: dark ? #7c3aed22 : #7c3aed18;
-    out property <color> popover: dark ? #161620 : #ffffff;
-    out property <color> danger: #f44747;
-    out property <color> warning: #d4a017;
-    out property <color> success: dark ? #a3e635 : #65a30d;
-    out property <color> info: #4ec9b0;
-    out property <color> link: dark ? #c4b5fd : #6d28d9;
+    out property <color> background: custom ? c-background : (dark ? #0a0a0f : #fbfbfd);
+    out property <color> foreground: custom ? c-foreground : (dark ? #e0e0e0 : #1c1c28);
+    out property <color> border: custom ? c-border : (dark ? #2a2a3a : #dcdce6);
+    out property <color> chrome: custom ? c-chrome : (dark ? #0f0f1a : #f1f1f7); // title bar, docks, status bar
+    out property <color> muted: custom ? c-muted : (dark ? #161620 : #e8e8f0);
+    out property <color> muted-fg: custom ? c-muted-fg : (dark ? #9ca3af : #6b7280);
+    out property <color> tab: custom ? c-tab : (dark ? #0d0d18 : #ececf3);
+    out property <color> primary: custom ? c-primary : (#7c3aed);
+    out property <color> primary-fg: custom ? c-primary-fg : (#ffffff);
+    out property <color> accent: custom ? c-accent : (dark ? #7c3aed33 : #7c3aed22);
+    out property <color> hover: custom ? c-hover : (dark ? #7c3aed22 : #7c3aed18);
+    out property <color> popover: custom ? c-popover : (dark ? #161620 : #ffffff);
+    out property <color> danger: custom ? c-danger : (#f44747);
+    out property <color> warning: custom ? c-warning : (#d4a017);
+    out property <color> success: custom ? c-success : (dark ? #a3e635 : #65a30d);
+    out property <color> info: custom ? c-info : (#4ec9b0);
+    out property <color> link: custom ? c-link : (dark ? #c4b5fd : #6d28d9);
     pure public function kind-letter(k: int) -> string {
         return (k == 2 || k == 3 || k == 4) ? "f" : (k == 5 || k == 10) ? "p" : k == 6 ? "v"
             : (k == 7 || k == 8 || k == 13 || k == 22 || k == 25) ? "T" : k == 9 ? "m" : k == 14 ? "k"
@@ -96,6 +119,7 @@ export global Icons {
             : name == "database" ? @image-url("icons/zed_database_zap.svg")
             : name == "script-runner" ? @image-url("icons/zed_runner.svg")
             : name == "processes" ? @image-url("icons/lib_cpu.svg")
+            : name == "extensions" ? @image-url("icons/extensions.svg")
             : name == "file" ? @image-url("icons/lib_file.svg")
             : name == "folder" ? @image-url("icons/lib_folder.svg")
             : name == "folder-open" ? @image-url("icons/lib_folder-open.svg")
@@ -178,6 +202,18 @@ export struct OutlineRow {
     depth: int,
     label: string,
     kind: string,
+}
+
+// A row of the Extensions panel. kind: 0 section header, 1 installed theme, 2 registry extension.
+// state (kind 2): 0 available, 1 installing, 2 installed, 3 update available.
+export struct ExtListRow {
+    kind: int,
+    id: string,
+    label: string,
+    sub: string,
+    state: int,
+    item: int,
+    active: bool,
 }
 
 // A diagnostic on one line: char columns, 1 error / 2 warning / 3 info / 4 hint.

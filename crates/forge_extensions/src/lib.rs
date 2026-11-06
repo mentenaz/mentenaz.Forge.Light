@@ -4,9 +4,11 @@
 mod install;
 mod manifest;
 mod registry;
+mod theme;
 
 pub use install::Installer;
 pub use manifest::{GrammarEntry, LanguageServerEntry, LibEntry, Manifest, Provides, valid_id};
+pub use theme::{Appearance, Family, Rgba, Style, Theme, ThemeRef, installed_themes, load_theme, parse_family, split_key};
 pub use registry::{DEFAULT_BASE_URL, Entry, Registry, SCHEMA_VERSIONS, WASM_API_VERSIONS};
 
 use std::fmt;
@@ -107,5 +109,34 @@ mod tests {
 
         assert_eq!(ext.installer.installed().len(), 2);
         assert!(matches!(ext.install_latest("no-such-extension-xyz"), Err(Error::NotFound(_) | Error::Registry(_))));
+    }
+
+    /// Installs a sample of real theme extensions and reads every theme in them.
+    #[test]
+    #[ignore]
+    fn live_theme_extensions_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext = Extensions::new(Registry::default(), dir.path());
+        let listed = ext.registry.list(None, &[Provides::Themes]).unwrap();
+        let mut failures = Vec::new();
+        let (mut themes, mut tried) = (0, 0);
+        for entry in listed.iter().step_by(listed.len() / 40 + 1) {
+            tried += 1;
+            match ext.install_latest(&entry.id) {
+                Ok(m) => {
+                    let found = installed_themes(&ext.installer).into_iter().filter(|t| t.extension_id == m.id).count();
+                    themes += found;
+                    if found == 0 {
+                        failures.push(format!("{}: no readable theme in {:?}", entry.id, m.themes));
+                    }
+                }
+                Err(e) => failures.push(format!("{}: install failed: {e}", entry.id)),
+            }
+        }
+        eprintln!("tried {tried} extensions, read {themes} themes, {} failures", failures.len());
+        for f in &failures {
+            eprintln!("  {f}");
+        }
+        assert!(failures.len() * 10 <= tried, "too many failures");
     }
 }
