@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="146"
+    height="135"
+    viewBox="0 0 146 135"
+>
+  <!-- Outer ring -->
+  <circle
+        cx="68"
+        cy="67"
+        r="52"
+        fill="none"
+        stroke="#2A2522"
+        stroke-width="14"
+    />
+  <circle
+        cx="68"
+        cy="67"
+        r="52"
+        fill="none"
+        stroke="#3D3733"
+        stroke-width="8"
+    />
+  <circle
+        cx="68"
+        cy="67"
+        r="52"
+        fill="none"
+        stroke="#1A1614"
+        stroke-width="3"
+    />
+
+  <!-- Small gear (bottom-right) -->
+  <g transform="translate(105, 95)">
+    <!-- Gear body -->
+
+    <!-- Teeth -->
+
+  </g>
+
+  <!-- Play triangle -->
+  <path d="M52 48 L52 86 L88 67 Z" fill="#F06010" />
+  <path d="M54 52 L54 82 L82 67 Z" fill="#FF7A2A" />
+</svg>

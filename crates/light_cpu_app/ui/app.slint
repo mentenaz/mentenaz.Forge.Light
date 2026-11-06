@@ -1,0 +1,28 @@
+import { Button, VerticalBox } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    width: 400px;
+    height: 300px;
+    title: "Light CPU Version";
+
+    // Native Rust callback definition
+    callback button_clicked();
+
+    VerticalBox {
+        alignment: center;
+        spacing: 20px;
+
+        Text {
+            text: "Running purely on the CPU!";
+            font-size: 18px;
+            horizontal-alignment: center;
+        }
+
+        Button {
+            text: "Click Me";
+            clicked => {
+                root.button_clicked();
+            }
+        }
+    }
+}

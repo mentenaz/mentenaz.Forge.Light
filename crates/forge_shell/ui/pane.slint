@@ -1,0 +1,204 @@
+import { Theme, TabInfo, EditorView } from "theme.slint";
+import { CodeView } from "codeview.slint";
+import { Branding } from "branding.slint";
+import { Ico, FlatButton, MenuRow, PopupSurface, HSep } from "widgets.slint";
+
+component TabItem inherits Rectangle {
+    in property <TabInfo> tab;
+    in property <bool> active;
+    in property <bool> pane-focused;
+    callback activate();
+    callback close();
+    callback context(length);
+    min-width: 96px;
+    max-width: 220px;
+    height: 100%;
+    background: active ? Theme.background : ta.has-hover ? Theme.hover : Theme.tab;
+
+    // Right edge divider and the active tab's top accent.
+    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+    Rectangle {
+        y: 0px; height: 2px;
+        background: root.active ? (root.pane-focused ? Theme.primary : Theme.muted-fg) : transparent;
+    }
+
+    ta := TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                if e.button == PointerEventButton.right {
+                    root.activate();
+                    root.context(self.absolute-position.x);
+                } else if e.button == PointerEventButton.middle {
+                    root.close();
+                }
+            }
+        }
+        clicked => { root.activate(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 6px;
+        Ico {
+            name: root.tab.icon;
+            size: 13px;
+            tint: root.active ? Theme.foreground : Theme.muted-fg;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.tab.title;
+            font-size: 12px;
+            color: root.active ? Theme.foreground : Theme.muted-fg;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // Pin marker, dirty dot or close button share one slot.
+        Rectangle {
+            width: 18px;
+            close-ta := TouchArea {
+                x: 0; y: (parent.height - 18px) / 2; width: 18px; height: 18px;
+                clicked => { root.close(); }
+                Rectangle {
+                    background: close-ta.has-hover ? Theme.accent : transparent;
+                    border-radius: 3px;
+                    if root.tab.pinned && !ta.has-hover && !close-ta.has-hover: Ico {
+                        name: "pin"; size: 11px; tint: Theme.muted-fg;
+                    }
+                    if root.tab.dirty && !root.tab.pinned && !ta.has-hover && !close-ta.has-hover: Rectangle {
+                        width: 7px; height: 7px; border-radius: 4px; background: Theme.foreground;
+                    }
+                    if ta.has-hover || close-ta.has-hover || (root.active && !root.tab.dirty && !root.tab.pinned): Ico {
+                        name: "close"; size: 11px; tint: Theme.muted-fg;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Pane inherits Rectangle {
+    in property <[TabInfo]> tabs;
+    in property <int> active: -1;
+    in property <bool> pane-focused;
+    in property <string> body;
+    in property <string> body-title;
+    in property <bool> can-split: true;
+    in property <bool> has-editor;
+    in property <EditorView> editor;
+    callback ed-viewport(int, int);
+    callback ed-text(string);
+    callback ed-command(string, bool);
+    callback ed-pressed(int, int, bool);
+    callback ed-dragged(int, int);
+    callback ed-copy() -> string;
+    callback ed-find(string, string, bool);
+    callback ed-seed() -> string;
+    callback ed-hover(int, int);
+    callback ed-definition(int, int);
+    callback ed-rename(string);
+    callback ed-idle(int, int);
+    callback activate(int);
+    callback close(int);
+    callback close-others(int);
+    callback toggle-pin(int);
+    callback split(int);
+    callback focus-pane();
+
+    property <int> ctx-index: 0;
+    property <length> menu-x: 0px;
+    property <length> menu-y: 0px;
+    background: Theme.background;
+
+    VerticalLayout {
+        // Tab strip
+        bar := Rectangle {
+            height: 32px;
+            background: Theme.tab;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            Flickable {
+                content-width: lay.preferred-width;
+                interactive: false;
+                lay := HorizontalLayout {
+                    alignment: start;
+                    for tab[i] in root.tabs: TabItem {
+                        tab: tab;
+                        active: i == root.active;
+                        pane-focused: root.pane-focused;
+                        activate => { root.focus-pane(); root.activate(i); }
+                        close => { root.close(i); }
+                        context(abs-x) => {
+                            root.ctx-index = i;
+                            root.menu-x = max(0px, abs-x - root.absolute-position.x);
+                            root.menu-y = bar.height;
+                            menu.show();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Content
+        Rectangle {
+            TouchArea { pointer-event(e) => { if e.kind == PointerEventKind.down { root.focus-pane(); } } }
+            if root.active < 0 || root.active >= root.tabs.length: VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+                Text { text: Branding.name; font-size: 20px; font-weight: 600; color: Theme.muted-fg; horizontal-alignment: center; }
+                Text { text: Branding.empty-hint; font-size: 12px; color: Theme.muted-fg; horizontal-alignment: center; }
+            }
+            if root.active >= 0 && root.active < root.tabs.length && root.body == "" && !root.has-editor: VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                Text { text: root.tabs[root.active].title; font-size: 16px; font-weight: 600; horizontal-alignment: center; color: Theme.foreground; }
+                Text { text: root.tabs[root.active].title + " content will live here."; font-size: 12px; horizontal-alignment: center; color: Theme.muted-fg; }
+            }
+            if root.active >= 0 && root.active < root.tabs.length && root.has-editor && root.body == "": CodeView {
+                ed: root.editor;
+                active: root.pane-focused;
+                viewport(first, count) => { root.ed-viewport(first, count); }
+                text-input(t) => { root.ed-text(t); }
+                command(c, shift) => { root.ed-command(c, shift); }
+                pressed(l, c, shift) => { root.focus-pane(); root.ed-pressed(l, c, shift); }
+                dragged(l, c) => { root.ed-dragged(l, c); }
+                copy-text => { root.ed-copy() }
+                find(k, t, f) => { root.ed-find(k, t, f); }
+                seed => { root.ed-seed() }
+                hover(l, c) => { root.ed-hover(l, c); }
+                definition(l, c) => { root.ed-definition(l, c); }
+                rename(name) => { root.ed-rename(name); }
+                idle(l, c) => { root.ed-idle(l, c); }
+            }
+            if root.active >= 0 && root.active < root.tabs.length && root.body != "": Flickable {
+                content-width: max(self.width, code.preferred-width + 32px);
+                content-height: code.preferred-height + 24px;
+                code := Text {
+                    x: 16px;
+                    y: 12px;
+                    text: root.body;
+                    font-family: "Cascadia Mono";
+                    font-size: 13px;
+                    color: Theme.foreground;
+                    wrap: no-wrap;
+                }
+            }
+        }
+    }
+
+    menu := PopupWindow {
+        x: root.menu-x; y: root.menu-y; width: 190px;
+        PopupSurface {
+            VerticalLayout {
+                padding: 4px;
+                MenuRow { label: "Close"; hint: "Ctrl+W"; activated => { root.close(root.ctx-index); menu.close(); } }
+                MenuRow { label: "Close Others"; activated => { root.close-others(root.ctx-index); menu.close(); } }
+                HSep { }
+                MenuRow {
+                    label: root.ctx-index >= 0 && root.ctx-index < root.tabs.length && root.tabs[root.ctx-index].pinned ? "Unpin Tab" : "Pin Tab";
+                    activated => { root.toggle-pin(root.ctx-index); menu.close(); }
+                }
+                MenuRow { label: "Split Right"; hint: "Ctrl+\\"; enabled: root.can-split; activated => { root.split(root.ctx-index); menu.close(); } }
+            }
+        }
+    }
+}

@@ -1,0 +1,240 @@
+// Forge Dark (from the gpui edition's assets/themes/forge.json), plus a light variant.
+
+export struct PanelInfo {
+    id: string,
+    title: string,
+    icon: string,
+    dock: int, // 0 left, 1 right, 2 bottom
+}
+
+export struct TabInfo {
+    title: string,
+    icon: string,
+    dirty: bool,
+    pinned: bool,
+}
+
+export struct Notice {
+    kind: int, // 0 info, 1 success, 2 warning, 3 error
+    title: string,
+    message: string,
+    time: string,
+    read: bool,
+}
+
+export struct FileRow {
+    name: string,
+    depth: int,
+    is-dir: bool,
+    expanded: bool,
+}
+
+export global Theme {
+    out property <string> mono: "Consolas";
+    pure public function syntax(kind: int) -> color {
+        return kind == 1 ? (dark ? #c084fc : #7c3aed)
+            : kind == 2 ? (dark ? #a3e635 : #4d7c0f)
+            : kind == 3 ? (dark ? #6b7280 : #9ca3af)
+            : kind == 4 ? (dark ? #fb923c : #c2410c)
+            : kind == 5 ? (dark ? #4ec9b0 : #0f766e)
+            : kind == 6 ? (dark ? #60a5fa : #1d4ed8)
+            : kind == 7 ? (dark ? #7dd3fc : #0369a1)
+            : kind == 8 ? (dark ? #fb923c : #c2410c)
+            : kind == 9 ? (dark ? #c4b5fd : #6d28d9)
+            : kind == 10 ? (dark ? #8b8b9e : #6b7280)
+            : foreground;
+    }
+    in-out property <bool> dark: true;
+
+    out property <color> background: dark ? #0a0a0f : #fbfbfd;
+    out property <color> foreground: dark ? #e0e0e0 : #1c1c28;
+    out property <color> border: dark ? #2a2a3a : #dcdce6;
+    out property <color> chrome: dark ? #0f0f1a : #f1f1f7; // title bar, docks, status bar
+    out property <color> muted: dark ? #161620 : #e8e8f0;
+    out property <color> muted-fg: dark ? #9ca3af : #6b7280;
+    out property <color> tab: dark ? #0d0d18 : #ececf3;
+    out property <color> primary: #7c3aed;
+    out property <color> primary-fg: #ffffff;
+    out property <color> accent: dark ? #7c3aed33 : #7c3aed22;
+    out property <color> hover: dark ? #7c3aed22 : #7c3aed18;
+    out property <color> popover: dark ? #161620 : #ffffff;
+    out property <color> danger: #f44747;
+    out property <color> warning: #d4a017;
+    out property <color> success: dark ? #a3e635 : #65a30d;
+    out property <color> info: #4ec9b0;
+    out property <color> link: dark ? #c4b5fd : #6d28d9;
+    pure public function kind-letter(k: int) -> string {
+        return (k == 2 || k == 3 || k == 4) ? "f" : (k == 5 || k == 10) ? "p" : k == 6 ? "v"
+            : (k == 7 || k == 8 || k == 13 || k == 22 || k == 25) ? "T" : k == 9 ? "m" : k == 14 ? "k"
+            : k == 15 ? "s" : (k == 12 || k == 20 || k == 21) ? "c" : k == 101 ? "q" : k == 102 ? "r" : k == 103 ? "s" : "·";
+    }
+    pure public function kind-color(k: int) -> color {
+        return (k == 2 || k == 3 || k == 4) ? #60a5fa : (k == 5 || k == 10) ? #4ec9b0 : k == 6 ? #7dd3fc
+            : (k == 7 || k == 8 || k == 13 || k == 22 || k == 25) ? #fb923c : k == 9 ? #c4b5fd : k == 14 ? #c084fc
+            : k == 15 ? #a3e635 : (k == 12 || k == 20 || k == 21) ? #f59e0b : k == 101 ? #f59e0b : k == 102 ? #60a5fa : k == 103 ? #a3e635 : #9ca3af;
+    }
+    pure public function severity(s: int) -> color {
+        return s == 1 ? danger : s == 2 ? warning : s == 3 ? info : muted-fg;
+    }
+}
+
+export global Icons {
+    pure public function by-name(name: string) -> image {
+        return name == "explorer" ? @image-url("icons/zed_file_tree.svg")
+            : name == "cockpit" ? @image-url("icons/zed_cockpit.svg")
+            : name == "helm" ? @image-url("icons/lib_Helm.svg")
+            : name == "python" ? @image-url("icons/zed_python.svg")
+            : name == "node" ? @image-url("icons/zed_node.svg")
+            : name == "dotnet" ? @image-url("icons/zed_dotnet.svg")
+            : name == "flows" ? @image-url("icons/lib_network.svg")
+            : name == "rust" ? @image-url("icons/zed_file_rust.svg")
+            : name == "demo" ? @image-url("icons/Demo.svg")
+            : name == "git" ? @image-url("icons/zed_git_branch.svg")
+            : name == "outline" ? @image-url("icons/zed_list_tree.svg")
+            : name == "terminal" ? @image-url("icons/zed_terminal_alt.svg")
+            : name == "debugger" ? @image-url("icons/zed_debug.svg")
+            : name == "database" ? @image-url("icons/zed_database_zap.svg")
+            : name == "script-runner" ? @image-url("icons/zed_runner.svg")
+            : name == "processes" ? @image-url("icons/lib_cpu.svg")
+            : name == "file" ? @image-url("icons/lib_file.svg")
+            : name == "folder" ? @image-url("icons/lib_folder.svg")
+            : name == "folder-open" ? @image-url("icons/lib_folder-open.svg")
+            : name == "menu" ? @image-url("icons/lib_menu.svg")
+            : name == "bell" ? @image-url("icons/lib_bell.svg")
+            : name == "search" ? @image-url("icons/lib_search.svg")
+            : name == "chevron-right" ? @image-url("icons/lib_chevron-right.svg")
+            : name == "chevron-down" ? @image-url("icons/lib_chevron-down.svg")
+            : name == "sun" ? @image-url("icons/lib_sun.svg")
+            : name == "moon" ? @image-url("icons/lib_moon.svg")
+            : name == "panel-left" ? @image-url("icons/lib_panel-left.svg")
+            : name == "panel-bottom" ? @image-url("icons/lib_panel-bottom.svg")
+            : name == "panel-right" ? @image-url("icons/lib_panel-right.svg")
+            : name == "close" ? @image-url("icons/lib_close.svg")
+            : name == "error" ? @image-url("icons/lib_circle-x.svg")
+            : name == "warn" ? @image-url("icons/lib_triangle-alert.svg")
+            : name == "info" ? @image-url("icons/lib_info.svg")
+            : name == "check" ? @image-url("icons/lib_check.svg")
+            : name == "pin" ? @image-url("icons/zed_pin.svg")
+            : name == "split" ? @image-url("icons/zed_split.svg")
+            : name == "branch" ? @image-url("icons/zed_git_branch.svg")
+            : @image-url("icons/lib_file.svg");
+    }
+}
+
+// One row of the Language Servers menu: a project header or a server.
+export struct LspInfo {
+    header: bool,
+    id: int,
+    name: string, // the project for a header
+    state: int, // 0 starting, 1 running, 2 warning, 3 error, 4 stopped, 5 not installed
+    message: string,
+    version: string,
+}
+
+export struct SpanView {
+    text: string,
+    col: int,
+    kind: int,
+}
+
+export struct MatchView {
+    start: int,
+    end: int,
+    current: bool,
+}
+
+// One row of the completion list; kind is LSP's CompletionItemKind number.
+export struct CompletionRow {
+    label: string,
+    detail: string,
+    kind: int,
+}
+
+// One row of the Search panel: a file header, or a line with the match picked out.
+export struct SearchRow {
+    header: bool,
+    // Index among the hits (-1 for a header).
+    item: int,
+    before: string,
+    matched: string,
+    after: string,
+    // Line number, or the folder of a header.
+    sub: string,
+}
+
+// One row of the Problems panel: a file header or a diagnostic.
+export struct ProblemRow {
+    header: bool,
+    // Index among the diagnostics (-1 for a header).
+    item: int,
+    label: string,
+    sub: string,
+    severity: int,
+}
+
+// A symbol in the outline: its index in the list, nesting depth and kind tag.
+export struct OutlineRow {
+    item: int,
+    depth: int,
+    label: string,
+    kind: string,
+}
+
+// A diagnostic on one line: char columns, 1 error / 2 warning / 3 info / 4 hint.
+export struct DiagView {
+    start: int,
+    end: int,
+    severity: int,
+    message: string,
+}
+
+export struct LineView {
+    number: int,
+    spans: [SpanView],
+    sel-start: int,
+    sel-end: int,
+    finds: [MatchView],
+    diags: [DiagView],
+    // The worst severity on the line, 0 if none.
+    severity: int,
+}
+
+// What the editor needs to draw: the visible lines plus document-wide numbers.
+export struct EditorView {
+    lines: [LineView],
+    line-count: int,
+    max-cols: int,
+    caret-line: int,
+    caret-col: int,
+    match-count: int,
+    // 1-based index of the match the selection covers, 0 if none.
+    match-index: int,
+    // Hover text for the symbol at columns hover-start..hover-end of hover-line ("" if none).
+    hover-text: string,
+    hover-line: int,
+    hover-start: int,
+    hover-end: int,
+    // The visible window of the completion list, the selected row in it, the
+    // cell it hangs from and the selected item's documentation.
+    completion: [CompletionRow],
+    completion-selected: int,
+    completion-line: int,
+    completion-col: int,
+    completion-doc: string,
+    // The signature tooltip: the text before, at and after the active
+    // parameter, its documentation and the cell it hangs from.
+    signature-open: bool,
+    signature-before: string,
+    signature-active: string,
+    signature-after: string,
+    signature-doc: string,
+    signature-line: int,
+    signature-col: int,
+    // The code actions menu (rows reuse the completion row), and the line the
+    // lightbulb sits on (-1 for none).
+    actions: [CompletionRow],
+    actions-selected: int,
+    actions-line: int,
+    actions-col: int,
+    bulb-line: int,
+}

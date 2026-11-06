@@ -1,0 +1,10 @@
+[package]
+name = "light_cpu_app"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

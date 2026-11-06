@@ -1,0 +1,747 @@
+import { Theme, EditorView, CompletionRow } from "theme.slint";
+import { Ico } from "widgets.slint";
+
+// Single-line text field for the find bar.
+export component FindInput inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> text <=> ti.text;
+    callback edited();
+    callback accepted(bool);
+    callback escaped();
+    out property <bool> has-focus: ti.has-focus;
+    public function focus-field() { ti.focus(); }
+    public function select-field() { ti.select-all(); }
+    height: 24px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: ti.has-focus ? Theme.primary : Theme.border;
+    background: Theme.background;
+    clip: true;
+
+    if ti.text == "": Text {
+        x: 7px;
+        text: root.placeholder;
+        color: Theme.muted-fg;
+        font-size: 12px;
+        vertical-alignment: center;
+    }
+    ti := TextInput {
+        x: 7px;
+        width: parent.width - 14px;
+        height: parent.height;
+        single-line: true;
+        font-size: 12px;
+        color: Theme.foreground;
+        vertical-alignment: center;
+        edited => { root.edited(); }
+        key-pressed(e) => {
+            if e.text == Key.Return { root.accepted(e.modifiers.shift); return accept; }
+            if e.text == Key.Escape { root.escaped(); return accept; }
+            reject
+        }
+    }
+}
+
+component BarButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: label == "" ? 24px : label.character-count <= 2 ? 26px : 60px;
+    height: 24px;
+    border-radius: 4px;
+    background: on ? Theme.accent : ta.has-hover && enabled ? Theme.hover : transparent;
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+    if root.icon != "": Ico { name: root.icon; size: 13px; tint: Theme.muted-fg; }
+    if root.label != "": Text {
+        text: root.label;
+        font-size: 11px;
+        color: root.enabled ? Theme.foreground : Theme.muted-fg;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Editor view prototype: monospace grid, visible lines only. A 2px-wide
+// transparent TextInput sits at the caret and receives typing, IME and paste;
+// everything else (caret, selection, colours, gutter) is drawn here.
+export component CodeView inherits Rectangle {
+    in property <EditorView> ed;
+    in property <bool> active: true;
+    // First visible line and how many lines to supply.
+    callback viewport(int, int);
+    callback text-input(string);
+    callback command(string, bool);
+    callback pressed(int, int, bool);
+    callback dragged(int, int);
+    callback copy-text() -> string;
+    // kind is "query" (text, case flag), "next", "prev", "replace", "replace-all" or "close".
+    callback find(string, string, bool);
+    // The selection if it is a single line, to prefill the find field.
+    callback seed() -> string;
+    // The mouse rested on a cell / Ctrl+click on a cell: ask the language server.
+    callback hover(int, int);
+    callback definition(int, int);
+    // The caret rested on a cell: ask for code actions (for the lightbulb).
+    callback idle(int, int);
+    // The new name typed into the rename bar.
+    callback rename(string);
+
+    property <bool> find-open;
+    property <bool> rename-open;
+    property <bool> replace-open;
+    property <bool> case-sensitive;
+    property <length> lh: 20px;
+    property <length> gutter: 56px;
+    property <length> font: 13px;
+    // Advance of one cell, measured from the font actually in use.
+    property <length> cw: probe.preferred-width / 20;
+    property <int> caret-line: ed.caret-line;
+    property <int> caret-col: ed.caret-col;
+    property <bool> blink-on: true;
+    // The cell under the mouse.
+    property <int> hov-line: Math.floor(ta.mouse-y / root.lh);
+    property <int> hov-col: Math.floor(ta.mouse-x / root.cw);
+    changed hov-line => { hover-timer.running = false; hover-timer.running = true; }
+    changed hov-col => { hover-timer.running = false; hover-timer.running = true; }
+    hover-timer := Timer {
+        interval: 450ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (ta.has-hover) { root.hover(root.hov-line, root.hov-col); }
+        }
+    }
+    background: Theme.background;
+    clip: true;
+
+    probe := Text {
+        text: "MMMMMMMMMMMMMMMMMMMM";
+        font-family: Theme.mono;
+        font-size: root.font;
+        visible: false;
+    }
+
+    function report() {
+        root.viewport(Math.max(0, Math.floor(-fl.content-y / root.lh)), Math.ceil(fl.height / root.lh) + 2);
+    }
+
+    function reveal() {
+        if (root.caret-line * root.lh < -fl.content-y) {
+            fl.content-y = -(root.caret-line * root.lh);
+        } else if ((root.caret-line + 1) * root.lh > -fl.content-y + fl.height) {
+            fl.content-y = -((root.caret-line + 1) * root.lh - fl.height);
+        }
+        if (root.caret-col * root.cw < -fl.content-x) {
+            fl.content-x = -(root.caret-col * root.cw);
+        } else if (root.caret-col * root.cw + 24px > -fl.content-x + fl.width) {
+            fl.content-x = -(root.caret-col * root.cw + 24px - fl.width);
+        }
+        root.blink-on = true;
+    }
+
+    function open-find(with-replace: bool) {
+        root.find-open = true;
+        if (with-replace) { root.replace-open = true; }
+        if (root.seed() != "") { find-in.text = root.seed(); }
+        root.find("query", find-in.text, root.case-sensitive);
+        find-in.focus-field();
+        find-in.select-field();
+    }
+
+    function open-rename() {
+        root.find-open = false;
+        root.rename-open = true;
+        rename-in.text = root.seed();
+        rename-in.focus-field();
+        rename-in.select-field();
+    }
+
+    function close-find() {
+        root.find-open = false;
+        root.find("close", "", false);
+        input.focus();
+    }
+
+    changed caret-line => { root.reveal(); idle-timer.running = false; idle-timer.running = true; }
+    changed caret-col => { root.reveal(); idle-timer.running = false; idle-timer.running = true; }
+    idle-timer := Timer {
+        interval: 600ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.idle(root.caret-line, root.caret-col);
+        }
+    }
+
+    Timer {
+        interval: 530ms;
+        running: input.has-focus;
+        triggered => { root.blink-on = !root.blink-on; }
+    }
+
+    // Gutter: fixed horizontally, scrolls with the text vertically.
+    Rectangle {
+        x: 0;
+        width: root.gutter;
+        background: Theme.background;
+        clip: true;
+        for line in root.ed.lines: Text {
+            x: 0;
+            y: line.number * root.lh + fl.content-y;
+            width: root.gutter - 12px;
+            height: root.lh;
+            text: "" + (line.number + 1);
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            font-family: Theme.mono;
+            font-size: root.font;
+            color: line.number == root.caret-line ? Theme.foreground : Theme.muted-fg;
+        }
+        if root.ed.bulb-line >= 0: Image {
+            source: @image-url("icons/bulb.svg");
+            colorize: #f59e0b;
+            x: 9px;
+            y: root.ed.bulb-line * root.lh + fl.content-y + 4px;
+            width: 12px;
+            height: 12px;
+            TouchArea { clicked => { root.command("code-actions", false); } }
+        }
+        for line in root.ed.lines: Rectangle {
+            visible: line.severity > 0;
+            x: 2px;
+            y: line.number * root.lh + fl.content-y + 3px;
+            width: 3px;
+            height: root.lh - 6px;
+            border-radius: 1.5px;
+            background: Theme.severity(line.severity);
+        }
+    }
+
+    fl := Flickable {
+        x: root.gutter;
+        width: parent.width - root.gutter;
+        height: parent.height;
+        interactive: false;
+        content-width: Math.max(self.width, root.ed.max-cols * root.cw + 48px);
+        content-height: Math.max(self.height, root.ed.line-count * root.lh + self.height / 2);
+        changed height => { root.report(); }
+        changed content-y => { root.report(); }
+        init => { root.report(); }
+
+        // Current line
+        Rectangle {
+            x: 0;
+            y: root.caret-line * root.lh;
+            height: root.lh;
+            width: fl.content-width;
+            background: Theme.hover;
+        }
+
+        for line in root.ed.lines: Rectangle {
+            x: 0;
+            y: line.number * root.lh;
+            height: root.lh;
+            width: 1px;
+            for f in line.finds: Rectangle {
+                x: f.start * root.cw;
+                width: (f.end - f.start) * root.cw;
+                height: root.lh;
+                border-radius: 2px;
+                background: f.current ? #f59e0b99 : #f59e0b44;
+            }
+            if line.sel-end > line.sel-start: Rectangle {
+                x: line.sel-start * root.cw;
+                width: (line.sel-end - line.sel-start) * root.cw;
+                height: root.lh;
+                background: #7c3aed66;
+            }
+            for span in line.spans: Text {
+                x: span.col * root.cw;
+                height: root.lh;
+                text: span.text;
+                vertical-alignment: center;
+                font-family: Theme.mono;
+                font-size: root.font;
+                color: Theme.syntax(span.kind);
+                wrap: no-wrap;
+            }
+            for d in line.diags: Image {
+                x: d.start * root.cw;
+                y: root.lh - 5px;
+                width: (d.end - d.start) * root.cw;
+                height: 3px;
+                source: @image-url("icons/wave.svg");
+                horizontal-tiling: repeat;
+                colorize: Theme.severity(d.severity);
+            }
+        }
+
+        // Mouse selection
+        ta := TouchArea {
+            width: fl.content-width;
+            height: fl.content-height;
+            mouse-cursor: text;
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                    if (e.modifiers.control) {
+                        root.definition(root.hov-line, root.hov-col);
+                    } else {
+                        root.pressed(Math.floor(self.mouse-y / root.lh), Math.max(0, Math.round(self.mouse-x / root.cw)), e.modifiers.shift);
+                    }
+                    input.focus();
+                }
+            }
+            moved => {
+                root.dragged(Math.floor(self.mouse-y / root.lh), Math.max(0, Math.round(self.mouse-x / root.cw)));
+            }
+        }
+
+        // Message of the diagnostic under the mouse.
+        for line in root.ed.lines: Rectangle {
+            x: 0;
+            y: 0;
+            width: 0;
+            height: 0;
+            for d in line.diags: Rectangle {
+                visible: ta.has-hover && line.number == Math.floor(ta.mouse-y / root.lh)
+                    && Math.floor(ta.mouse-x / root.cw) >= d.start && Math.floor(ta.mouse-x / root.cw) < d.end;
+                x: Math.max(0px, Math.min(d.start * root.cw, -fl.content-x + fl.width - self.width - 8px));
+                y: (line.number + 1) * root.lh + self.height + 4px > -fl.content-y + fl.height
+                    ? line.number * root.lh - self.height - 2px
+                    : (line.number + 1) * root.lh + 2px;
+                width: Math.min(560px, tip.preferred-width + 20px);
+                height: tip.preferred-height + 14px;
+                background: Theme.popover;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.severity(d.severity);
+                drop-shadow-blur: 8px;
+                drop-shadow-color: #00000066;
+                tip := Text {
+                    x: 10px;
+                    y: 7px;
+                    width: parent.width - 20px;
+                    text: d.message;
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    color: Theme.foreground;
+                }
+            }
+        }
+
+        // What the language server says about the symbol under the mouse.
+        Rectangle {
+            visible: root.ed.hover-text != "" && ta.has-hover && root.hov-line == root.ed.hover-line
+                && root.hov-col >= root.ed.hover-start && root.hov-col < root.ed.hover-end;
+            x: Math.max(0px, Math.min(root.ed.hover-start * root.cw, -fl.content-x + fl.width - self.width - 8px));
+            y: (root.ed.hover-line + 1) * root.lh + self.height + 4px > -fl.content-y + fl.height
+                ? root.ed.hover-line * root.lh - self.height - 2px
+                : (root.ed.hover-line + 1) * root.lh + 2px;
+            width: Math.min(620px, htip.preferred-width + 20px);
+            height: htip.preferred-height + 14px;
+            background: Theme.popover;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000066;
+            htip := Text {
+                x: 10px;
+                y: 7px;
+                width: parent.width - 20px;
+                text: root.ed.hover-text;
+                wrap: word-wrap;
+                font-family: Theme.mono;
+                font-size: 12px;
+                color: Theme.foreground;
+            }
+        }
+
+        // Completion list under the word being typed, with the selected item's documentation beside it.
+        cpop := Rectangle {
+            visible: root.ed.completion.length > 0;
+            width: 420px;
+            height: root.ed.completion.length * 22px + 8px;
+            x: Math.max(0px, Math.min(root.ed.completion-col * root.cw, -fl.content-x + fl.width - self.width - 8px));
+            y: (root.ed.completion-line + 1) * root.lh + 2px + self.height > -fl.content-y + fl.height
+                ? root.ed.completion-line * root.lh - self.height - 2px
+                : (root.ed.completion-line + 1) * root.lh + 2px;
+            background: Theme.popover;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000066;
+            VerticalLayout {
+                padding: 4px;
+                for row[i] in root.ed.completion: Rectangle {
+                    height: 22px;
+                    border-radius: 3px;
+                    background: i == root.ed.completion-selected ? Theme.accent : transparent;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            y: 3px;
+                            border-radius: 3px;
+                            background: Theme.kind-color(row.kind).with-alpha(0.2);
+                            Text {
+                                text: Theme.kind-letter(row.kind);
+                                color: Theme.kind-color(row.kind);
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: row.label;
+                            font-family: Theme.mono;
+                            font-size: 12px;
+                            color: Theme.foreground;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: row.detail;
+                            font-size: 11px;
+                            color: Theme.muted-fg;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 0;
+                            max-width: 170px;
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            visible: root.ed.completion.length > 0 && root.ed.completion-doc != "";
+            width: Math.min(340px, dtip.preferred-width + 20px);
+            height: dtip.preferred-height + 14px;
+            property <bool> fits-right: cpop.x + cpop.width + 4px + self.width <= -fl.content-x + fl.width;
+            property <bool> fits-left: cpop.x - self.width - 4px >= 0px;
+            x: self.fits-right ? cpop.x + cpop.width + 4px : self.fits-left ? cpop.x - self.width - 4px : cpop.x;
+            y: (self.fits-right || self.fits-left) ? cpop.y : cpop.y + cpop.height + 4px;
+            background: Theme.popover;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000066;
+            dtip := Text {
+                x: 10px;
+                y: 7px;
+                width: parent.width - 20px;
+                text: root.ed.completion-doc;
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Theme.foreground;
+            }
+        }
+
+        // Code actions menu under the caret.
+        apop := Rectangle {
+            visible: root.ed.actions.length > 0;
+            width: 400px;
+            height: root.ed.actions.length * 22px + 8px;
+            x: Math.max(0px, Math.min(root.ed.actions-col * root.cw, -fl.content-x + fl.width - self.width - 8px));
+            y: (root.ed.actions-line + 1) * root.lh + 2px + self.height > -fl.content-y + fl.height
+                ? root.ed.actions-line * root.lh - self.height - 2px
+                : (root.ed.actions-line + 1) * root.lh + 2px;
+            background: Theme.popover;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000066;
+            VerticalLayout {
+                padding: 4px;
+                for row[i] in root.ed.actions: Rectangle {
+                    height: 22px;
+                    border-radius: 3px;
+                    background: i == root.ed.actions-selected ? Theme.accent : transparent;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            y: 3px;
+                            border-radius: 3px;
+                            background: Theme.kind-color(row.kind).with-alpha(0.2);
+                            Text {
+                                text: Theme.kind-letter(row.kind);
+                                color: Theme.kind-color(row.kind);
+                                font-size: 11px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: row.label;
+                            font-size: 12px;
+                            color: Theme.foreground;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: row.detail;
+                            font-size: 11px;
+                            color: Theme.muted-fg;
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Signature of the call being typed, above the caret line.
+        Rectangle {
+            visible: root.ed.signature-open;
+            width: Math.min(700px, Math.max(300px, s1.preferred-width + s2.preferred-width + s3.preferred-width + 24px));
+            height: 14px + 18px + (root.ed.signature-doc != "" ? sdoc.preferred-height + 6px : 0px);
+            x: Math.max(0px, Math.min(root.ed.signature-col * root.cw, -fl.content-x + fl.width - self.width - 8px));
+            y: root.ed.signature-line * root.lh - self.height - 2px < -fl.content-y
+                ? (root.ed.signature-line + 1) * root.lh + 2px
+                : root.ed.signature-line * root.lh - self.height - 2px;
+            background: Theme.popover;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: #00000066;
+            s1 := Text {
+                x: 10px;
+                y: 7px;
+                height: 18px;
+                text: root.ed.signature-before;
+                wrap: no-wrap;
+                font-family: Theme.mono;
+                font-size: 12px;
+                vertical-alignment: center;
+                color: Theme.foreground;
+            }
+            s2 := Text {
+                x: 10px + s1.preferred-width;
+                y: 7px;
+                height: 18px;
+                text: root.ed.signature-active;
+                wrap: no-wrap;
+                font-family: Theme.mono;
+                font-size: 12px;
+                font-weight: 700;
+                vertical-alignment: center;
+                color: Theme.link;
+            }
+            s3 := Text {
+                x: 10px + s1.preferred-width + s2.preferred-width;
+                y: 7px;
+                height: 18px;
+                text: root.ed.signature-after;
+                wrap: no-wrap;
+                font-family: Theme.mono;
+                font-size: 12px;
+                vertical-alignment: center;
+                color: Theme.foreground;
+            }
+            sdoc := Text {
+                visible: root.ed.signature-doc != "";
+                x: 10px;
+                y: 29px;
+                width: parent.width - 20px;
+                text: root.ed.signature-doc;
+                wrap: word-wrap;
+                font-size: 12px;
+                color: Theme.muted-fg;
+            }
+        }
+
+        if input.has-focus && root.active && root.blink-on: Rectangle {
+            x: root.caret-col * root.cw;
+            y: root.caret-line * root.lh;
+            width: 2px;
+            height: root.lh;
+            background: Theme.foreground;
+        }
+
+        input := TextInput {
+            x: root.caret-col * root.cw;
+            y: root.caret-line * root.lh;
+            width: 2px;
+            height: root.lh;
+            single-line: false;
+            color: transparent;
+            font-family: Theme.mono;
+            font-size: root.font;
+            text: "";
+            edited => {
+                root.text-input(self.text);
+                self.text = "";
+            }
+            key-pressed(e) => {
+                if root.ed.actions.length > 0 {
+                    if e.text == Key.UpArrow { root.command("actions-up", false); return accept; }
+                    if e.text == Key.DownArrow { root.command("actions-down", false); return accept; }
+                    if (e.text == Key.Return || e.text == Key.Tab) && !e.modifiers.shift { root.command("actions-accept", false); return accept; }
+                    if e.text == Key.Escape { root.command("actions-close", false); return accept; }
+                }
+                if e.modifiers.control && !e.modifiers.alt && !e.modifiers.shift && e.text == "." { root.command("code-actions", false); return accept; }
+                if root.ed.completion.length > 0 {
+                    if e.text == Key.UpArrow { root.command("completion-up", false); return accept; }
+                    if e.text == Key.DownArrow { root.command("completion-down", false); return accept; }
+                    if (e.text == Key.Return || e.text == Key.Tab) && !e.modifiers.shift { root.command("completion-accept", false); return accept; }
+                    if e.text == Key.Escape { root.command("completion-close", false); return accept; }
+                }
+                if root.ed.signature-open && e.text == Key.Escape { root.command("signature-close", false); return accept; }
+                if e.modifiers.control && !e.modifiers.alt && !e.modifiers.shift && e.text == " " { root.command("completion-trigger", false); return accept; }
+                if e.text == Key.Escape && root.find-open { root.close-find(); return accept; }
+                if e.modifiers.shift && e.modifiers.alt && !e.modifiers.control && (e.text == "F" || e.text == "f") { root.command("format-document", false); return accept; }
+                if e.text == Key.F12 { root.command(e.modifiers.shift ? "find-references" : "goto-definition", false); return accept; }
+                if e.text == Key.F2 { root.open-rename(); return accept; }
+                if e.text == Key.F8 { root.command(e.modifiers.shift ? "prev-problem" : "next-problem", false); return accept; }
+                if e.text == Key.F3 { root.find(e.modifiers.shift ? "prev" : "next", "", false); return accept; }
+                if e.modifiers.alt && !e.modifiers.control && e.text == Key.UpArrow { root.command("move-up", false); return accept; }
+                if e.modifiers.alt && !e.modifiers.control && e.text == Key.DownArrow { root.command("move-down", false); return accept; }
+                if e.text == Key.Backtab || (e.text == Key.Tab && e.modifiers.shift) { root.command("backtab", false); return accept; }
+                if e.modifiers.control && !e.modifiers.alt && !e.modifiers.shift {
+                    if e.text == "f" { root.open-find(false); return accept; }
+                    if e.text == "h" { root.open-find(true); return accept; }
+                    if e.text == "/" { root.command("toggle-comment", false); return accept; }
+                }
+                if e.text == Key.LeftArrow { root.command(e.modifiers.control ? "word-left" : "left", e.modifiers.shift); return accept; }
+                if e.text == Key.RightArrow { root.command(e.modifiers.control ? "word-right" : "right", e.modifiers.shift); return accept; }
+                if e.text == Key.UpArrow { root.command("up", e.modifiers.shift); return accept; }
+                if e.text == Key.DownArrow { root.command("down", e.modifiers.shift); return accept; }
+                if e.text == Key.PageUp { root.command("page-up", e.modifiers.shift); return accept; }
+                if e.text == Key.PageDown { root.command("page-down", e.modifiers.shift); return accept; }
+                if e.text == Key.Home { root.command(e.modifiers.control ? "doc-start" : "home", e.modifiers.shift); return accept; }
+                if e.text == Key.End { root.command(e.modifiers.control ? "doc-end" : "end", e.modifiers.shift); return accept; }
+                if e.text == Key.Backspace { root.command("backspace", false); return accept; }
+                if e.text == Key.Delete { root.command("delete", false); return accept; }
+                if e.text == Key.Return { root.command("newline", false); return accept; }
+                if e.text == Key.Tab && !e.modifiers.control { root.command("tab", false); return accept; }
+                if e.modifiers.control && !e.modifiers.alt {
+                    if e.text == "z" { root.command("undo", false); return accept; }
+                    if e.text == "Z" || e.text == "y" { root.command("redo", false); return accept; }
+                    if e.text == "a" { root.command("select-all", false); return accept; }
+                    if e.text == "s" { root.command("save", false); return accept; }
+                    if e.text == "c" || e.text == "x" {
+                        // Let the default handler copy: park the selection in the hidden input.
+                        self.text = root.copy-text();
+                        self.select-all();
+                        if e.text == "x" { root.command("delete", false); }
+                        return reject;
+                    }
+                }
+                reject
+            }
+        }
+    }
+
+    // Rename bar, floating at the top right.
+    Rectangle {
+        visible: root.rename-open;
+        x: parent.width - self.width - 22px;
+        y: 6px;
+        width: Math.min(380px, parent.width - 40px);
+        height: 36px;
+        background: Theme.popover;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: #00000066;
+        HorizontalLayout {
+            padding: 6px;
+            spacing: 8px;
+            Text { text: "Rename to"; font-size: 12px; color: Theme.muted-fg; vertical-alignment: center; }
+            rename-in := FindInput {
+                placeholder: "New name";
+                horizontal-stretch: 1;
+                accepted(shift) => {
+                    root.rename-open = false;
+                    if (self.text != "") { root.rename(self.text); }
+                    input.focus();
+                }
+                escaped => { root.rename-open = false; input.focus(); }
+            }
+        }
+    }
+
+    // Find / replace bar, floating at the top right.
+    Rectangle {
+        visible: root.find-open;
+        x: parent.width - self.width - 22px;
+        y: 6px;
+        width: Math.min(460px, parent.width - 40px);
+        height: root.replace-open ? 66px : 36px;
+        background: Theme.popover;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: #00000066;
+
+        VerticalLayout {
+            padding: 6px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 4px;
+                BarButton {
+                    icon: root.replace-open ? "chevron-down" : "chevron-right";
+                    clicked => { root.replace-open = !root.replace-open; }
+                }
+                find-in := FindInput {
+                    horizontal-stretch: 1;
+                    placeholder: "Find";
+                    edited => { root.find("query", self.text, root.case-sensitive); }
+                    accepted(shift) => { root.find(shift ? "prev" : "next", "", false); }
+                    escaped => { root.close-find(); }
+                }
+                Text {
+                    width: 62px;
+                    font-size: 11px;
+                    color: Theme.muted-fg;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    text: root.ed.match-count == 0 ? (find-in.text == "" ? "" : "No results")
+                        : "" + root.ed.match-index + " of " + root.ed.match-count;
+                }
+                BarButton {
+                    label: "Aa";
+                    on: root.case-sensitive;
+                    clicked => {
+                        root.case-sensitive = !root.case-sensitive;
+                        root.find("query", find-in.text, root.case-sensitive);
+                    }
+                }
+                BarButton { label: "↑"; enabled: root.ed.match-count > 0; clicked => { root.find("prev", "", false); } }
+                BarButton { label: "↓"; enabled: root.ed.match-count > 0; clicked => { root.find("next", "", false); } }
+                BarButton { icon: "close"; clicked => { root.close-find(); } }
+            }
+            if root.replace-open: HorizontalLayout {
+                spacing: 4px;
+                Rectangle { width: 24px; }
+                replace-in := FindInput {
+                    horizontal-stretch: 1;
+                    placeholder: "Replace";
+                    accepted(shift) => { root.find("replace", self.text, false); }
+                    escaped => { root.close-find(); }
+                }
+                BarButton { label: "Replace"; clicked => { root.find("replace", replace-in.text, false); } }
+                BarButton { label: "All"; clicked => { root.find("replace-all", replace-in.text, false); } }
+            }
+        }
+    }
+}
