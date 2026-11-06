@@ -142,7 +142,7 @@ impl Shell {
                     if !path.is_file() {
                         continue;
                     }
-                    Tab::file(path)
+                    Tab::file(path, &self.languages)
                 }
                 store::TabKind::Panel => match self.panel(&t.target) {
                     Some(p) => Tab::panel(p.1.to_string(), p.2.to_string(), format!("panel:{}", t.target)),
@@ -241,7 +241,7 @@ impl Shell {
             self.drafted.insert(d.path.clone());
             let found = (0..2).find_map(|g| self.groups[g].iter().position(|t| t.path.as_deref() == Some(path.as_path())).map(|i| (g, i)));
             let (g, i) = found.unwrap_or_else(|| {
-                let tab = Tab::file(path.clone());
+                let tab = Tab::file(path.clone(), &self.languages);
                 self.attach_lsp(&tab);
                 self.groups[0].push(tab);
                 if self.active[0].is_none() {

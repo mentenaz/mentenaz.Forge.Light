@@ -3,11 +3,14 @@
 //! applied on the UI thread when `ext-changed` fires.
 
 use super::*;
+use editor_core::{GrammarSource, LoadedGrammar};
 use forge_extensions::{Entry, Extensions, Provides, ThemeRef};
 
 pub(crate) enum ExtReply {
     Listed { seq: u64, result: Result<Vec<Entry>, String> },
     Installed { id: String, result: Result<(), String> },
+    /// An installed language's grammar, loaded on a worker thread.
+    Grammar { def: Arc<LanguageDef>, result: Result<LoadedGrammar, String> },
 }
 
 impl Shell {
@@ -16,6 +19,55 @@ impl Shell {
         let Some(ext) = &self.ext else { return };
         self.ext_installed = ext.installer.installed().into_iter().map(|m| (m.id, m.version)).collect();
         self.ext_themes = forge_extensions::installed_themes(&ext.installer);
+        let installed = forge_extensions::installed_languages(&ext.installer).into_iter().map(|l| LanguageDef {
+            name: l.name,
+            suffixes: l.suffixes,
+            source: GrammarSource::Wasm { grammar: l.grammar, wasm: l.grammar_wasm, highlights: l.highlights, version: l.version },
+        });
+        self.set_languages(Languages::with_installed(installed));
+    }
+
+    /// Switches to a new set of languages: files take the language their name now selects,
+    /// and grammars of languages that changed or went away are dropped.
+    pub(crate) fn set_languages(&mut self, new: Languages) {
+        for old in self.languages.all().iter().filter(|d| !d.is_built_in()) {
+            if new.by_name(&old.name).is_none_or(|d| *d != **old) {
+                self.highlighter.borrow_mut().forget(&old.name);
+                self.grammar_failed.remove(&old.name);
+            }
+        }
+        self.languages = new;
+        for tab in self.groups.iter_mut().flatten() {
+            let lang = tab.path.as_deref().and_then(|p| self.languages.for_path(p));
+            if lang != tab.lang {
+                tab.lang = lang;
+                tab.reset_highlighting();
+            }
+        }
+        self.ensure_grammars();
+    }
+
+    /// Starts loading the grammar of every open file's installed language that is neither
+    /// loaded, loading, nor known to fail. Needs the window, to be told when a load finishes.
+    pub(crate) fn ensure_grammars(&mut self) {
+        let Some(weak) = self.weak.clone() else { return };
+        let mut wanted: Vec<Arc<LanguageDef>> = Vec::new();
+        for lang in self.groups.iter().flatten().filter_map(|t| t.lang.as_ref()).filter(|l| !l.is_built_in()) {
+            if !wanted.iter().any(|w| w.name == lang.name) {
+                wanted.push(lang.clone());
+            }
+        }
+        for def in wanted {
+            if self.highlighter.borrow().is_ready(&def) || self.grammar_failed.contains(&def.name) || !self.grammar_loading.insert(def.name.clone()) {
+                continue;
+            }
+            let (replies, weak) = (self.ext_replies.clone(), weak.clone());
+            std::thread::spawn(move || {
+                let result = editor_core::load_grammar(&def);
+                replies.lock().unwrap().push_back(ExtReply::Grammar { def, result });
+                let _ = weak.upgrade_in_event_loop(|ui| ui.invoke_ext_changed());
+            });
+        }
     }
 
     /// Fetches the registry listing for the current query. Without `force`, only the first time.
@@ -30,18 +82,22 @@ impl Shell {
         self.ext_loading = true;
         self.ext_status = "Loading…".into();
         self.ext_seq += 1;
-        let (seq, replies, query, all) = (self.ext_seq, self.ext_replies.clone(), self.ext_query.clone(), self.ext_all);
+        let (seq, replies, query, kind) = (self.ext_seq, self.ext_replies.clone(), self.ext_query.clone(), self.ext_kind);
         std::thread::spawn(move || {
-            let provides: &[Provides] = if all { &[] } else { &[Provides::Themes] };
+            let provides: &[Provides] = match kind {
+                0 => &[Provides::Themes],
+                1 => &[Provides::Languages],
+                _ => &[],
+            };
             let result = ext.registry.list(Some(&query), provides).map_err(|e| e.to_string());
             replies.lock().unwrap().push_back(ExtReply::Listed { seq, result });
             let _ = weak.upgrade_in_event_loop(|ui| ui.invoke_ext_changed());
         });
     }
 
-    pub(crate) fn ext_search(&mut self, weak: slint::Weak<AppWindow>, query: String, all: bool) {
+    pub(crate) fn ext_search(&mut self, weak: slint::Weak<AppWindow>, query: String, kind: i32) {
         self.ext_query = query;
-        self.ext_all = all;
+        self.ext_kind = kind;
         self.ext_refresh(weak, true);
     }
 
@@ -79,6 +135,25 @@ impl Shell {
                     changed = true;
                 }
                 ExtReply::Listed { .. } => {}
+                ExtReply::Grammar { def, result } => {
+                    self.grammar_loading.remove(&def.name);
+                    // The extension may have been updated or removed while the grammar loaded.
+                    if self.languages.by_name(&def.name).is_some_and(|d| *d == *def) {
+                        match result {
+                            Ok(grammar) => {
+                                self.highlighter.borrow_mut().install(&def.name, grammar);
+                                for tab in self.groups.iter_mut().flatten().filter(|t| t.lang.as_ref().is_some_and(|l| l.name == def.name)) {
+                                    tab.reset_highlighting();
+                                }
+                            }
+                            Err(e) => {
+                                self.grammar_failed.insert(def.name.clone());
+                                self.notify(2, &format!("{} highlighting unavailable", def.name), e);
+                            }
+                        }
+                    }
+                    changed = true;
+                }
                 ExtReply::Installed { id, result } => {
                     self.ext_busy.remove(&id);
                     match result {
@@ -92,6 +167,7 @@ impl Shell {
                 }
             }
         }
+        self.ensure_grammars();
         changed
     }
 

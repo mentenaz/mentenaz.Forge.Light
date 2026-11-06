@@ -12,6 +12,93 @@ fn zord(index: usize) -> forge_extensions::Theme {
     forge_extensions::parse_family(ZORD).unwrap().themes.swap_remove(index)
 }
 
+/// Writes an installed extension with one language whose grammar file holds `wasm`.
+fn write_language_extension(root: &std::path::Path, id: &str, wasm: &[u8]) {
+    let ext = root.join("installed").join(id);
+    std::fs::create_dir_all(ext.join("grammars")).unwrap();
+    std::fs::create_dir_all(ext.join("languages/fake")).unwrap();
+    std::fs::write(ext.join("extension.toml"), format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\nlanguages = [\"languages/fake\"]\n")).unwrap();
+    std::fs::write(ext.join("languages/fake/config.toml"), "name = \"Fake\"\ngrammar = \"fake\"\npath_suffixes = [\"fake\"]\n").unwrap();
+    std::fs::write(ext.join("languages/fake/highlights.scm"), "(comment) @comment").unwrap();
+    std::fs::write(ext.join("grammars/fake.wasm"), wasm).unwrap();
+}
+
+fn shell_with_extensions_in(root: &std::path::Path) -> Shell {
+    let mut shell = Shell::new(root.to_path_buf());
+    shell.ext = Some(Arc::new(forge_extensions::Extensions::new(forge_extensions::Registry::default(), root.join("data"))));
+    shell
+}
+
+#[test]
+fn an_installed_language_takes_over_its_files_and_a_broken_grammar_is_reported_once() {
+    let dir = std::env::temp_dir().join(format!("forge_lang_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.fake");
+    fs::write(&file, "# hi\n").unwrap();
+    let mut shell = shell_with_extensions_in(&dir);
+    shell.open_file(file);
+    let lang = |s: &Shell| s.groups[0][0].lang.as_ref().map(|l| l.name.clone());
+    assert_eq!(lang(&shell), None, "nothing claims .fake yet");
+
+    write_language_extension(&dir.join("data"), "fake-ext", b"this is not wasm");
+    shell.reload_extensions();
+    assert_eq!(lang(&shell).as_deref(), Some("Fake"));
+    assert!(!shell.highlighter.borrow().is_ready(shell.groups[0][0].lang.as_ref().unwrap()));
+
+    // The worker thread's answer: the grammar does not load. It is reported, and not retried.
+    let def = shell.languages.by_name("Fake").unwrap();
+    let error = editor_core::load_grammar(&def).err().expect("garbage is not a grammar");
+    shell.grammar_loading.insert("Fake".into());
+    shell.ext_replies.lock().unwrap().push_back(extensions::ExtReply::Grammar { def, result: Err(error) });
+    assert!(shell.apply_ext_replies());
+    assert!(shell.grammar_failed.contains("Fake") && shell.grammar_loading.is_empty());
+    assert!(shell.notices[0].title.contains("Fake"), "{}", shell.notices[0].title);
+
+    // Removing the language hands its files back and forgets the failure.
+    shell.set_languages(editor_core::Languages::built_in());
+    assert_eq!(lang(&shell), None);
+    assert!(shell.grammar_failed.is_empty());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Installs the real `vrl` language extension and colours a file with it:
+/// `cargo test -p forge_shell -- --ignored`.
+#[test]
+#[ignore]
+fn a_real_language_extension_highlights_its_files() {
+    let dir = std::env::temp_dir().join(format!("forge_vrl_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("x.vrl");
+    fs::write(&file, "# a comment\n.status = 200\n").unwrap();
+    let mut shell = shell_with_extensions_in(&dir);
+    shell.ext.as_ref().unwrap().install_latest("vrl").unwrap();
+    shell.open_file(file);
+    shell.reload_extensions();
+    let def = shell.groups[0][0].lang.clone().expect("vrl claims .vrl");
+    assert_eq!(def.name, "VRL");
+
+    let grammar = editor_core::load_grammar(&def).unwrap();
+    shell.ext_replies.lock().unwrap().push_back(extensions::ExtReply::Grammar { def: def.clone(), result: Ok(grammar) });
+    assert!(shell.apply_ext_replies());
+    assert!(shell.highlighter.borrow().is_ready(&def));
+
+    let buf = shell.groups[0][0].buffer.as_ref().unwrap();
+    let parsed = shell.highlighter.borrow_mut().open(&def, buf).expect("the grammar parses the file");
+    let lines = parsed.line_spans(buf, 0, buf.len_lines());
+    assert!(lines[0].iter().any(|s| s.kind == editor_core::Kind::Comment), "{:?}", lines[0]);
+    assert!(lines[1].iter().any(|s| s.kind == editor_core::Kind::Number && s.text == "200"), "{:?}", lines[1]);
+    // Editing keeps the tree in step (the store is handed back after each parse).
+    let buf = shell.groups[0][0].buffer.as_mut().unwrap();
+    buf.set_caret(1, 0, false);
+    buf.insert("# more\n");
+    let mut parsed = parsed;
+    parsed.update(buf);
+    assert!(parsed.line_spans(buf, 1, 1)[0].iter().any(|s| s.kind == editor_core::Kind::Comment));
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_maximized_window_saves_its_last_normal_rectangle_not_the_screen_size() {
     let rect = |x, y, w, h| store::WindowRect { x, y, w, h };

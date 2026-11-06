@@ -92,7 +92,7 @@ pub(crate) fn editor_view(tab: &Tab, highlighter: &RefCell<Highlighter>) -> Edit
     // The syntax tree follows the buffer's edits; only the visible lines are coloured,
     // and only again when the text or the visible window changed.
     if tab.parsed.borrow().is_none() && !tab.parse_failed.get() {
-        match tab.lang.and_then(|lang| highlighter.borrow_mut().open(lang, buf)) {
+        match tab.lang.as_deref().and_then(|lang| highlighter.borrow_mut().open(lang, buf)) {
             Some(parsed) => *tab.parsed.borrow_mut() = Some(parsed),
             None => tab.parse_failed.set(true),
         }
@@ -346,7 +346,12 @@ pub(crate) fn sync_tabs(ui: &AppWindow, s: &Shell) {
             ui.set_active_file(tab.title.as_str().into());
             let cursor = tab.buffer.as_ref().map(|b| b.caret()).map_or(String::new(), |(l, c)| format!("{}:{}", l + 1, c + 1));
             ui.set_cursor_text(cursor.into());
-            ui.set_language(tab.path.as_deref().map_or("", Shell::language).into());
+            ui.set_language(match &tab.lang {
+                // An installed language names itself; the built-in ones keep the usual spellings.
+                Some(l) if !l.is_built_in() => l.name.as_str(),
+                _ => tab.path.as_deref().map_or("", Shell::language),
+            }
+            .into());
         }
         None => {
             ui.set_active_file(SharedString::new());

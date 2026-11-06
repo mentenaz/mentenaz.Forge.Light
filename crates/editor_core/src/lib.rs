@@ -4,8 +4,10 @@
 mod buffer;
 pub mod columns;
 mod highlight;
+mod languages;
 mod syntax;
 
 pub use buffer::{Buffer, Match, TextEdit};
 pub use highlight::{Kind, Span, Syntax, spans};
-pub use syntax::{Highlighter, Language, Parsed};
+pub use languages::{GrammarSource, LanguageDef, Languages};
+pub use syntax::{Highlighter, Language, LoadedGrammar, Parsed, load_grammar};

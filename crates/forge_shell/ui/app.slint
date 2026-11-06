@@ -103,9 +103,9 @@ component ExtensionsView inherits Rectangle {
     in property <[ExtListRow]> rows;
     in property <string> status;
     in-out property <string> query;
-    in-out property <bool> all;
+    in-out property <int> kind: 0;
     callback refresh();
-    callback search(string, bool);
+    callback search(string, int);
     callback install(string);
     callback pick-theme(int);
     init => { if root.shown { root.refresh(); } }
@@ -120,15 +120,15 @@ component ExtensionsView inherits Rectangle {
                 placeholder: "Search extensions";
                 text <=> root.query;
                 horizontal-stretch: 1;
-                accepted(shift) => { root.search(root.query, root.all); }
+                accepted(shift) => { root.search(root.query, root.kind); }
             }
             Rectangle {
-                width: 52px;
+                width: 70px;
                 height: 24px;
                 border-radius: 4px;
                 background: kind-ta.has-hover ? Theme.hover : transparent;
-                kind-ta := TouchArea { clicked => { root.all = !root.all; root.search(root.query, root.all); } }
-                Text { text: root.all ? "All" : "Themes"; font-size: 11px; color: Theme.foreground; horizontal-alignment: center; vertical-alignment: center; }
+                kind-ta := TouchArea { clicked => { root.kind = Math.mod(root.kind + 1, 3); root.search(root.query, root.kind); } }
+                Text { text: root.kind == 0 ? "Themes" : root.kind == 1 ? "Languages" : "All"; font-size: 11px; color: Theme.foreground; horizontal-alignment: center; vertical-alignment: center; }
             }
         }
         Text { text: root.status; font-size: 11px; color: Theme.muted-fg; overflow: elide; }
@@ -263,7 +263,7 @@ component DockPanel inherits Rectangle {
     callback reference-clicked(int);
     callback outline-clicked(int);
     callback ext-refresh();
-    callback ext-search(string, bool);
+    callback ext-search(string, int);
     callback ext-install(string);
     callback theme-picked(int);
     callback hide();
@@ -304,7 +304,7 @@ component DockPanel inherits Rectangle {
             rows: root.ext-rows;
             status: root.ext-status;
             refresh() => { root.ext-refresh(); }
-            search(q, all) => { root.ext-search(q, all); }
+            search(q, k) => { root.ext-search(q, k); }
             install(id) => { root.ext-install(id); }
             pick-theme(i) => { root.theme-picked(i); }
         }
@@ -431,7 +431,7 @@ export component AppWindow inherits Window {
     callback reference-clicked(int);
     callback outline-clicked(int);
     callback ext-refresh();
-    callback ext-search(string, bool);
+    callback ext-search(string, int);
     callback ext-install(string);
     callback theme-picked(int);
     callback search-edited();
@@ -557,7 +557,7 @@ export component AppWindow inherits Window {
                             ext-rows: root.ext-rows;
                             ext-status: root.ext-status;
                             ext-refresh() => { root.ext-refresh(); }
-                            ext-search(q, all) => { root.ext-search(q, all); }
+                            ext-search(q, k) => { root.ext-search(q, k); }
                             ext-install(id) => { root.ext-install(id); }
                             theme-picked(i) => { root.theme-picked(i); }
                             search-rows: root.search-rows;
@@ -670,7 +670,7 @@ export component AppWindow inherits Window {
                             ext-rows: root.ext-rows;
                             ext-status: root.ext-status;
                             ext-refresh() => { root.ext-refresh(); }
-                            ext-search(q, all) => { root.ext-search(q, all); }
+                            ext-search(q, k) => { root.ext-search(q, k); }
                             ext-install(id) => { root.ext-install(id); }
                             theme-picked(i) => { root.theme-picked(i); }
                             search-rows: root.search-rows;
@@ -713,7 +713,7 @@ export component AppWindow inherits Window {
                             ext-rows: root.ext-rows;
                             ext-status: root.ext-status;
                             ext-refresh() => { root.ext-refresh(); }
-                            ext-search(q, all) => { root.ext-search(q, all); }
+                            ext-search(q, k) => { root.ext-search(q, k); }
                             ext-install(id) => { root.ext-install(id); }
                             theme-picked(i) => { root.theme-picked(i); }
                             search-rows: root.search-rows;

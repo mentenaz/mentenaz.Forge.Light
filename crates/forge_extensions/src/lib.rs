@@ -2,11 +2,13 @@
 //! callers run the (blocking) calls on a worker thread.
 
 mod install;
+mod languages;
 mod manifest;
 mod registry;
 mod theme;
 
 pub use install::Installer;
+pub use languages::{InstalledLanguage, installed_languages};
 pub use manifest::{GrammarEntry, LanguageServerEntry, LibEntry, Manifest, Provides, valid_id};
 pub use theme::{Appearance, Family, Rgba, Style, Theme, ThemeRef, installed_themes, load_theme, parse_family, split_key};
 pub use registry::{DEFAULT_BASE_URL, Entry, Registry, SCHEMA_VERSIONS, WASM_API_VERSIONS};

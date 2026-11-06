@@ -47,7 +47,7 @@ pub(crate) struct Tab {
     /// The editable text, for files that could be read as UTF-8.
     pub(crate) buffer: Option<Buffer>,
     /// Tree-sitter grammar when there is one; otherwise the simple tokenizer in `syntax`.
-    pub(crate) lang: Option<Language>,
+    pub(crate) lang: Option<Arc<LanguageDef>>,
     pub(crate) syntax: Option<Syntax>,
     /// The syntax tree, opened on first draw and then kept in step with the buffer.
     pub(crate) parsed: RefCell<Option<Parsed>>,
@@ -132,11 +132,18 @@ impl Tab {
         d.saved.follow(buf);
     }
 
-    pub(crate) fn file(path: PathBuf) -> Self {
+    /// Forgets the syntax tree and coloured spans, so the next draw starts from the current grammar.
+    pub(crate) fn reset_highlighting(&mut self) {
+        *self.parsed.borrow_mut() = None;
+        *self.spans.borrow_mut() = None;
+        self.parse_failed.set(false);
+    }
+
+    pub(crate) fn file(path: PathBuf, languages: &Languages) -> Self {
         let title = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let mut tab = Self::panel(title, "file".into(), path.display().to_string());
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        tab.lang = Language::from_extension(ext);
+        tab.lang = languages.for_path(&path);
         tab.syntax = Syntax::for_extension(ext);
         tab.disk = disk_stamp(&path);
         let small = fs::metadata(&path).is_ok_and(|m| m.len() <= MAX_FILE_BYTES);

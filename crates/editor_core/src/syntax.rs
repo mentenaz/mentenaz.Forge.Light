@@ -3,13 +3,21 @@
 //! from those and re-parsed incrementally, and highlighting runs the grammar's
 //! query over just the lines asked for.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, Tree};
+use tree_sitter::wasmtime::Engine;
+use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, Tree, WasmStore};
 
+use crate::languages::{GrammarSource, LanguageDef};
 use crate::{Buffer, Kind, Span, TextEdit};
+
+/// Cap on a grammar's `.wasm` and on its highlight query, against absurd files.
+const MAX_WASM_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_QUERY_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Language {
@@ -25,21 +33,6 @@ pub enum Language {
 }
 
 impl Language {
-    pub fn from_extension(ext: &str) -> Option<Self> {
-        Some(match ext {
-            "rs" => Self::Rust,
-            "toml" => Self::Toml,
-            "json" | "jsonc" => Self::Json,
-            "py" => Self::Python,
-            "js" | "mjs" | "cjs" | "jsx" => Self::JavaScript,
-            "sh" | "bash" => Self::Bash,
-            "cs" => Self::CSharp,
-            "css" => Self::Css,
-            "html" | "htm" => Self::Html,
-            _ => return None,
-        })
-    }
-
     /// The grammar and its highlight query.
     fn grammar(self) -> (tree_sitter::Language, &'static str) {
         match self {
@@ -78,12 +71,81 @@ struct Grammar {
     query: Query,
     /// The `Kind` of each capture in the query, by capture index.
     kinds: Vec<Kind>,
+    /// Wasm grammars run inside a store that a parser has to hold while it parses.
+    /// It is kept here between parses, so documents of one language share it.
+    store: Option<RefCell<Option<WasmStore>>>,
+}
+
+impl Grammar {
+    /// Parses `buf` (incrementally, given `old`) with `parser`.
+    fn parse(&self, parser: &mut Parser, buf: &Buffer, old: Option<&Tree>) -> Option<Tree> {
+        let Some(cell) = &self.store else { return parse(parser, buf, old) };
+        let store = cell.borrow_mut().take()?;
+        parser.set_wasm_store(store).ok()?;
+        let tree = parser.set_language(&self.language).ok().and_then(|()| parse(parser, buf, old));
+        // The parser deletes a store it still holds, so it always goes back.
+        *cell.borrow_mut() = parser.take_wasm_store();
+        tree
+    }
+}
+
+/// A grammar loaded and ready to be installed in a [`Highlighter`]. Loading a wasm
+/// grammar takes tens to hundreds of milliseconds, so it can be done on another thread.
+pub struct LoadedGrammar {
+    language: tree_sitter::Language,
+    query: Query,
+    kinds: Vec<Kind>,
+    store: Option<WasmStore>,
+}
+
+fn engine() -> &'static Engine {
+    static ENGINE: OnceLock<Engine> = OnceLock::new();
+    ENGINE.get_or_init(Engine::default)
+}
+
+fn read_capped(path: &std::path::Path, max: u64) -> Result<Vec<u8>, String> {
+    let len = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+    if len > max {
+        return Err(format!("{} is larger than {} MiB", path.display(), max / (1024 * 1024)));
+    }
+    std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn compile(language: tree_sitter::Language, source: &str, store: Option<WasmStore>) -> Result<LoadedGrammar, String> {
+    let query = Query::new(&language, source).map_err(|e| format!("highlight query: {e}"))?;
+    let kinds = query.capture_names().iter().map(|n| kind_of(n)).collect();
+    Ok(LoadedGrammar { language, query, kinds, store })
+}
+
+/// Loads a language's grammar and highlight query. Blocking; for a wasm grammar call it off the UI thread.
+pub fn load_grammar(def: &LanguageDef) -> Result<LoadedGrammar, String> {
+    match &def.source {
+        GrammarSource::BuiltIn(lang) => {
+            let (language, source) = lang.grammar();
+            compile(language, source, None)
+        }
+        GrammarSource::Wasm { grammar, wasm, highlights, .. } => {
+            let bytes = read_capped(wasm, MAX_WASM_BYTES)?;
+            let highlights = highlights.as_deref().ok_or("the extension has no highlights.scm for this language")?;
+            let query = String::from_utf8(read_capped(highlights, MAX_QUERY_BYTES)?).map_err(|_| "highlights.scm is not UTF-8".to_string())?;
+            let mut store = WasmStore::new(engine()).map_err(|e| format!("wasm runtime: {}", e.message))?;
+            let language = store.load_language(grammar, &bytes).map_err(|e| format!("grammar {grammar:?}: {}", e.message))?;
+            compile(language, &query, Some(store))
+        }
+    }
+}
+
+impl From<LoadedGrammar> for Grammar {
+    fn from(g: LoadedGrammar) -> Self {
+        Grammar { language: g.language, query: g.query, kinds: g.kinds, store: g.store.map(|s| RefCell::new(Some(s))) }
+    }
 }
 
 /// Loads each grammar and its query once and starts per-document parsers.
 #[derive(Default)]
 pub struct Highlighter {
-    grammars: HashMap<Language, Option<Rc<Grammar>>>,
+    /// By language name. `None`: loading failed, and is not retried.
+    grammars: HashMap<String, Option<Rc<Grammar>>>,
 }
 
 impl Highlighter {
@@ -91,24 +153,40 @@ impl Highlighter {
         Self::default()
     }
 
+    /// Whether `open` can work for this language now. Built-in grammars load on first use;
+    /// an installed one has to be loaded with [`load_grammar`] and [`install`](Self::install)ed.
+    pub fn is_ready(&self, def: &LanguageDef) -> bool {
+        def.is_built_in() || matches!(self.grammars.get(&def.name), Some(Some(_)))
+    }
+
+    pub fn install(&mut self, name: &str, grammar: LoadedGrammar) {
+        self.grammars.insert(name.to_owned(), Some(Rc::new(grammar.into())));
+    }
+
+    /// Drops a loaded grammar, e.g. when its extension was updated or removed.
+    pub fn forget(&mut self, name: &str) {
+        self.grammars.remove(name);
+    }
+
     /// Parses `buf` and starts following its edits. `None` if the grammar or
-    /// its query can't be loaded.
-    pub fn open(&mut self, lang: Language, buf: &Buffer) -> Option<Parsed> {
-        let grammar = self
-            .grammars
-            .entry(lang)
-            .or_insert_with(|| {
-                let (language, source) = lang.grammar();
-                let query = Query::new(&language, source).ok()?;
-                let kinds = query.capture_names().iter().map(|n| kind_of(n)).collect();
-                Some(Rc::new(Grammar { language, query, kinds }))
-            })
-            .clone()?;
+    /// its query can't be loaded, or an installed grammar is not loaded yet.
+    pub fn open(&mut self, def: &LanguageDef, buf: &Buffer) -> Option<Parsed> {
+        let grammar = match self.grammars.get(&def.name) {
+            Some(g) => g.clone(),
+            None if def.is_built_in() => {
+                let g = load_grammar(def).ok().map(|g| Rc::new(Grammar::from(g)));
+                self.grammars.insert(def.name.clone(), g.clone());
+                g
+            }
+            None => None,
+        }?;
         let mut parser = Parser::new();
-        parser.set_language(&grammar.language).ok()?;
+        if grammar.store.is_none() {
+            parser.set_language(&grammar.language).ok()?;
+        }
         buf.set_track_edits(true);
         let cursor = buf.edit_cursor();
-        let tree = parse(&mut parser, buf, None)?;
+        let tree = grammar.parse(&mut parser, buf, None)?;
         Some(Parsed { parser, tree: Some(tree), grammar, revision: buf.revision(), cursor })
     }
 }
@@ -163,7 +241,7 @@ impl Parsed {
             // Edits we weren't told about: the old tree can't be trusted.
             _ => old = None,
         }
-        self.tree = parse(&mut self.parser, buf, old.as_ref());
+        self.tree = self.grammar.parse(&mut self.parser, buf, old.as_ref());
         self.revision = buf.revision();
         self.cursor = buf.edit_cursor();
     }
@@ -242,6 +320,11 @@ fn runs(line: &str, paint: &[Kind]) -> Vec<Span> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Languages;
+
+    fn lang(name: &str) -> std::sync::Arc<LanguageDef> {
+        Languages::built_in().by_name(name).unwrap()
+    }
 
     fn all_spans(parsed: &Parsed, buf: &Buffer) -> Vec<Vec<Span>> {
         parsed.line_spans(buf, 0, buf.len_lines())
@@ -250,7 +333,7 @@ mod tests {
     #[test]
     fn rust_spans_per_line() {
         let buf = Buffer::new("fn main() {\n    let x = \"hi\"; // c\n}\n");
-        let parsed = Highlighter::new().open(Language::Rust, &buf).unwrap();
+        let parsed = Highlighter::new().open(&lang("Rust"), &buf).unwrap();
         let lines = all_spans(&parsed, &buf);
         assert_eq!(lines.len(), 4);
         assert_eq!((lines[0][0].text.as_str(), lines[0][0].kind), ("fn", Kind::Keyword));
@@ -263,7 +346,7 @@ mod tests {
     #[test]
     fn multiline_block_comment_and_unicode_columns() {
         let buf = Buffer::new("/* a\n b */ let é = 1;");
-        let parsed = Highlighter::new().open(Language::Rust, &buf).unwrap();
+        let parsed = Highlighter::new().open(&lang("Rust"), &buf).unwrap();
         let lines = all_spans(&parsed, &buf);
         assert_eq!(lines[0][0].kind, Kind::Comment);
         assert_eq!(lines[1][0].kind, Kind::Comment);
@@ -277,28 +360,48 @@ mod tests {
     fn visible_window_matches_full_document() {
         let src: String = (0..50).map(|i| format!("fn f{i}() {{ let s = \"x{i}\"; }}\n")).collect();
         let buf = Buffer::new(&src);
-        let parsed = Highlighter::new().open(Language::Rust, &buf).unwrap();
+        let parsed = Highlighter::new().open(&lang("Rust"), &buf).unwrap();
         let full = all_spans(&parsed, &buf);
         assert_eq!(parsed.line_spans(&buf, 20, 5), full[20..25].to_vec());
     }
 
     #[test]
-    fn every_language_loads() {
+    fn every_built_in_language_loads() {
         let mut h = Highlighter::new();
-        for lang in [
-            Language::Rust,
-            Language::Toml,
-            Language::Json,
-            Language::Python,
-            Language::JavaScript,
-            Language::Bash,
-            Language::CSharp,
-            Language::Css,
-            Language::Html,
-        ] {
+        for def in Languages::built_in().all() {
             let buf = Buffer::new("x");
-            assert!(h.open(lang, &buf).is_some(), "{lang:?} failed to load");
+            assert!(h.is_ready(def) && h.open(def, &buf).is_some(), "{} failed to load", def.name);
         }
+    }
+
+    #[test]
+    fn a_grammar_that_cannot_load_is_an_error_not_a_crash() {
+        let dir = std::env::temp_dir().join(format!("forge_grammar_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (wasm, query) = (dir.join("g.wasm"), dir.join("highlights.scm"));
+        let def = |wasm: &std::path::Path, highlights: Option<&std::path::Path>| LanguageDef {
+            name: "Fake".into(),
+            suffixes: vec!["fake".into()],
+            source: GrammarSource::Wasm { grammar: "fake".into(), wasm: wasm.to_owned(), highlights: highlights.map(ToOwned::to_owned), version: "1".into() },
+        };
+        // Missing files, garbage that is not wasm, and a missing query.
+        assert!(load_grammar(&def(&wasm, Some(&query))).is_err());
+        std::fs::write(&wasm, b"this is not wasm").unwrap();
+        std::fs::write(&query, "(comment) @comment").unwrap();
+        assert!(load_grammar(&def(&wasm, Some(&query))).is_err());
+        assert!(load_grammar(&def(&wasm, None)).is_err());
+        // An installed language is not ready, and does not open, until its grammar is installed.
+        let mut h = Highlighter::new();
+        let fake = def(&wasm, Some(&query));
+        assert!(!h.is_ready(&fake));
+        assert!(h.open(&fake, &Buffer::new("x")).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_loaded_grammar_can_cross_threads() {
+        fn send<T: Send>() {}
+        send::<LoadedGrammar>();
     }
 
     /// After every kind of edit, the incrementally updated tree must colour the
@@ -307,11 +410,11 @@ mod tests {
     fn incremental_matches_fresh_parse() {
         let mut h = Highlighter::new();
         let mut buf = Buffer::new("fn main() {\n    let a = 1;\n    // note\n    println!(\"é{}\", a);\n}\n");
-        let mut parsed = h.open(Language::Rust, &buf).unwrap();
+        let mut parsed = h.open(&lang("Rust"), &buf).unwrap();
 
         let check = |parsed: &mut Parsed, buf: &Buffer, step: &str| {
             parsed.update(buf);
-            let fresh = Highlighter::new().open(Language::Rust, buf).unwrap();
+            let fresh = Highlighter::new().open(&lang("Rust"), buf).unwrap();
             assert_eq!(all_spans(parsed, buf), all_spans(&fresh, buf), "after {step}");
         };
 
@@ -353,7 +456,7 @@ mod tests {
         let mut buf = Buffer::new(&src);
         let mut h = Highlighter::new();
         let t = std::time::Instant::now();
-        let mut parsed = h.open(Language::Rust, &buf).unwrap();
+        let mut parsed = h.open(&lang("Rust"), &buf).unwrap();
         println!("{} KB, {} lines: first parse {:?}", src.len() / 1024, buf.len_lines(), t.elapsed());
 
         buf.set_caret(5000, 4, false);

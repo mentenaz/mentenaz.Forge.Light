@@ -556,6 +556,7 @@ pub(crate) fn wire_lsp(ui: &AppWindow, shell: &Rc<RefCell<Shell>>) -> Arc<Manage
 pub(crate) fn wire_extensions(ui: &AppWindow, shell: &Rc<RefCell<Shell>>) {
     {
         let mut s = shell.borrow_mut();
+        s.weak = Some(ui.as_weak());
         s.reload_extensions();
         if let Some((key, palette)) = s.saved_theme() {
             themes::apply(ui, &palette);
@@ -567,8 +568,8 @@ pub(crate) fn wire_extensions(ui: &AppWindow, shell: &Rc<RefCell<Shell>>) {
         s.ext_refresh(ui.as_weak(), false);
         sync_extensions(&ui, &s);
     });
-    on!(ui, shell, on_ext_search, |ui, s, q, all| {
-        s.ext_search(ui.as_weak(), q.to_string(), all);
+    on!(ui, shell, on_ext_search, |ui, s, q, kind| {
+        s.ext_search(ui.as_weak(), q.to_string(), kind);
         sync_extensions(&ui, &s);
     });
     on!(ui, shell, on_ext_install, |ui, s, id| {
@@ -590,6 +591,8 @@ pub(crate) fn wire_extensions(ui: &AppWindow, shell: &Rc<RefCell<Shell>>) {
         let Some(ui) = weak.upgrade() else { return };
         let changed = sh.borrow_mut().apply_ext_replies();
         if changed {
+            // A loaded grammar changes how open files are coloured.
+            sync(&ui, &sh.borrow());
             sync_extensions(&ui, &sh.borrow());
         }
     });

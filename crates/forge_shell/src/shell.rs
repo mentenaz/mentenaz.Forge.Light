@@ -71,8 +71,8 @@ pub(crate) struct Shell {
     /// Only the newest registry listing is applied.
     pub(crate) ext_seq: u64,
     pub(crate) ext_query: String,
-    /// List every kind of extension, not only themes.
-    pub(crate) ext_all: bool,
+    /// What the registry list shows: 0 themes, 1 languages, 2 everything.
+    pub(crate) ext_kind: i32,
     pub(crate) ext_entries: Vec<forge_extensions::Entry>,
     pub(crate) ext_status: String,
     pub(crate) ext_loaded: bool,
@@ -84,6 +84,13 @@ pub(crate) struct Shell {
     pub(crate) ext_themes: Vec<forge_extensions::ThemeRef>,
     /// The applied theme (see `ThemeRef::key`); `None` for the built-in one.
     pub(crate) theme_key: Option<String>,
+    /// Built-in languages plus those of installed extensions.
+    pub(crate) languages: Languages,
+    /// Wakes the UI thread from worker threads; set once the window exists.
+    pub(crate) weak: Option<slint::Weak<AppWindow>>,
+    /// Installed languages whose grammar is being loaded, or failed to load, by name.
+    pub(crate) grammar_loading: HashSet<String>,
+    pub(crate) grammar_failed: HashSet<String>,
     /// The window's rectangle while it is not maximized: what gets saved when it is.
     pub(crate) window_normal: Option<store::WindowRect>,
     pub(crate) window_maximized: bool,
@@ -173,7 +180,7 @@ impl Shell {
             ext_replies: Arc::new(Mutex::new(VecDeque::new())),
             ext_seq: 0,
             ext_query: String::new(),
-            ext_all: false,
+            ext_kind: 0,
             ext_entries: Vec::new(),
             ext_status: String::new(),
             ext_loaded: false,
@@ -182,6 +189,10 @@ impl Shell {
             ext_installed: BTreeMap::new(),
             ext_themes: Vec::new(),
             theme_key: None,
+            languages: Languages::built_in(),
+            weak: None,
+            grammar_loading: HashSet::new(),
+            grammar_failed: HashSet::new(),
             window_normal: None,
             window_maximized: false,
             recent_all,

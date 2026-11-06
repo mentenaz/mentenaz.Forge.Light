@@ -12,6 +12,7 @@ impl Shell {
             self.groups[g].push(tab);
             self.active[g] = Some(self.groups[g].len() - 1);
         }
+        self.ensure_grammars();
     }
 
     /// Opens `path` (or switches to its tab) with the caret at `line` and a UTF-16 column.
@@ -54,7 +55,8 @@ impl Shell {
     }
 
     pub(crate) fn open_file(&mut self, path: PathBuf) {
-        self.open_tab(Tab::file(path));
+        let tab = Tab::file(path, &self.languages);
+        self.open_tab(tab);
     }
 
     pub(crate) fn open_panel_tab(&mut self, id: &str) {
@@ -113,7 +115,7 @@ impl Shell {
         let Some(t) = self.groups[0].get(i) else { return };
         // The split gets its own copy of the file; edits in one pane don't show in the other.
         let copy = match &t.path {
-            Some(path) => Tab::file(path.clone()),
+            Some(path) => Tab::file(path.clone(), &self.languages),
             None => Tab::panel(t.title.clone(), t.icon.clone(), t.key.clone()),
         };
         self.group = 1;

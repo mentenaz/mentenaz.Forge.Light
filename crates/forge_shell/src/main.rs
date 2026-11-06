@@ -54,7 +54,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use editor_core::columns::{char_col, expand_tabs_at, visual_col};
-use editor_core::{Buffer, Highlighter, Language, Match, Parsed, Span, Syntax};
+use editor_core::{Buffer, Highlighter, LanguageDef, Languages, Match, Parsed, Span, Syntax};
 use lsp_client::{ContentChange, Diag, DocSource, DocSync, Manager, ServerId, ServerSpec, Status, char_to_utf16_col, normalize_path, path_key, utf16_to_char_col};
 use slint::{ModelRc, SharedString, VecModel};
 
