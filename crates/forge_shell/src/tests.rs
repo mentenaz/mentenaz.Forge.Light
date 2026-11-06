@@ -13,6 +13,23 @@ fn zord(index: usize) -> forge_extensions::Theme {
 }
 
 #[test]
+fn a_maximized_window_saves_its_last_normal_rectangle_not_the_screen_size() {
+    let rect = |x, y, w, h| store::WindowRect { x, y, w, h };
+    let (normal, screen) = (rect(40, 40, 1280, 800), rect(-8, -8, 1936, 1048));
+    let mut keep = None;
+    // While normal, what is read is what is saved, and remembered.
+    assert_eq!(session::window_to_save(false, Some(normal), &mut keep), Some(normal));
+    // Maximized: the screen-sized rectangle is not saved; the remembered one is.
+    assert_eq!(session::window_to_save(true, Some(screen), &mut keep), Some(normal));
+    assert_eq!(keep, Some(normal));
+    // Unreadable while normal (minimised, closing): nothing new is remembered.
+    assert_eq!(session::window_to_save(false, None, &mut keep), None);
+    assert_eq!(keep, Some(normal));
+    // Maximized right after start-up with nothing remembered: nothing to save.
+    assert_eq!(session::window_to_save(true, Some(screen), &mut None), None);
+}
+
+#[test]
 fn a_theme_maps_onto_the_palette_and_falls_back_for_what_it_lacks() {
     let p = themes::palette(&zord(0));
     let rgb = |t: &str| forge_extensions::Rgba::parse(t).unwrap();

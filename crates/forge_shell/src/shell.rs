@@ -84,6 +84,9 @@ pub(crate) struct Shell {
     pub(crate) ext_themes: Vec<forge_extensions::ThemeRef>,
     /// The applied theme (see `ThemeRef::key`); `None` for the built-in one.
     pub(crate) theme_key: Option<String>,
+    /// The window's rectangle while it is not maximized: what gets saved when it is.
+    pub(crate) window_normal: Option<store::WindowRect>,
+    pub(crate) window_maximized: bool,
 }
 
 impl Shell {
@@ -179,6 +182,8 @@ impl Shell {
             ext_installed: BTreeMap::new(),
             ext_themes: Vec::new(),
             theme_key: None,
+            window_normal: None,
+            window_maximized: false,
             recent_all,
             notices: vec![
                 notice(3, "dotnet build failed", "Api.csproj: 1 error, see the Script Runner output.", "Just now", false),

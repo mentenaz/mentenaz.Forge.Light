@@ -27,11 +27,28 @@ pub(crate) fn persist(ui: &AppWindow, s: &mut Shell) {
 }
 
 /// Writes the session if it changed since the last write. A failed write is noted and skipped.
+/// The window rectangle to save. A maximized window reports the size of the whole screen, which
+/// reopened as a normal window runs off the bottom of the screen, so then the last normal one is kept.
+pub(crate) fn window_to_save(maximized: bool, current: Option<store::WindowRect>, normal: &mut Option<store::WindowRect>) -> Option<store::WindowRect> {
+    if !maximized && current.is_some() {
+        *normal = current;
+    }
+    if maximized { *normal } else { current }
+}
+
 pub(crate) fn persist_session(ui: &AppWindow, s: &mut Shell) {
     if s.store.is_none() {
         return;
     }
+    let maximized = ui.window().is_maximized();
+    if maximized != s.window_maximized {
+        s.window_maximized = maximized;
+        if let Some(store) = &s.store {
+            let _ = store.set_setting("window_maximized", if maximized { "true" } else { "false" });
+        }
+    }
     let mut session = snapshot(ui, s);
+    session.layout.window = window_to_save(maximized, session.layout.window, &mut s.window_normal);
     if session.layout.window.is_none() {
         // Keep the last good window if it can't be read now (minimised, or closing).
         session.layout.window = s.last_saved.as_ref().and_then(|l| l.layout.window);
@@ -67,6 +84,11 @@ pub(crate) fn apply_layout(ui: &AppWindow, s: &mut Shell, l: &store::Layout) {
         s.group = 0;
     } else {
         s.group = (l.active_group as usize).min(1);
+    }
+    s.window_normal = l.window;
+    if s.store.as_ref().and_then(|st| st.setting("window_maximized")).as_deref() == Some("true") {
+        s.window_maximized = true;
+        ui.window().set_maximized(true);
     }
     if let Some(w) = l.window {
         // Ignore a size or place that couldn't be reached on this screen.

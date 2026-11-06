@@ -67,6 +67,12 @@ Tests that use the real registry are ignored by default:
 cargo test -p forge_extensions -- --ignored
 ```
 
+## Window state
+
+The window's size, position and whether it was maximized are saved with the session. A maximized
+window saves its last normal size rather than the screen-sized one, so it no longer reopens
+larger than the screen.
+
 ## Relationship to Zed
 
 The extension format and registry API follow [Zed](https://github.com/zed-industries/zed), and some
